@@ -7,6 +7,7 @@ import subprocess
 
 from .types import StateSnapshot, Decision, Action, ExecResult
 from .gate import is_allowed_tests_argv
+from .patch_safety import patch_paths_are_confined
 
 
 def _abspath(workspace: str, p: str) -> str:
@@ -47,10 +48,10 @@ def _apply_patch_minimal(workspace: str, patch: str) -> Dict[str, Any]:
     if not os.path.isdir(os.path.join(ws, ".git")):
         return {"applied": False, "reason": "workspace is not a git repo (.git missing)"}
 
-    # defense-in-depth: disallow patch that mentions absolute paths
-    for bad in ("/", "\\"):
-        if "\n--- " + bad in patch or "\n+++ " + bad in patch:
-            return {"applied": False, "reason": "patch contains absolute paths"}
+    # defense-in-depth: parse diff headers and enforce confinement
+    ok, reason, files = patch_paths_are_confined(ws, patch)
+    if not ok:
+        return {"applied": False, "reason": f"patch rejected: {reason}"}
 
     proc = subprocess.run(
         ["git", "apply", "--whitespace=nowarn", "--reject", "--recount", "-"],
@@ -64,6 +65,7 @@ def _apply_patch_minimal(workspace: str, patch: str) -> Dict[str, Any]:
         "returncode": proc.returncode,
         "stdout": proc.stdout.decode("utf-8", errors="replace")[-4000:],
         "stderr": proc.stderr.decode("utf-8", errors="replace")[-4000:],
+        "touched_files": [{"old": f.old_path, "new": f.new_path} for f in files],
     }
 
 

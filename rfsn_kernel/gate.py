@@ -5,6 +5,7 @@ from typing import List
 import os
 
 from .types import StateSnapshot, Proposal, Action, Decision
+from .patch_safety import patch_paths_are_confined
 
 
 # HARD BOUNDARY: allowlist test argv (deterministic, non-interactive)
@@ -67,10 +68,13 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
             approved.append(a)
 
         elif a.type == "APPLY_PATCH":
-            # minimal: patch is text, apply path restrictions in controller
             patch = a.payload.get("patch")
             if not isinstance(patch, str) or not patch.strip():
                 return Decision(False, "APPLY_PATCH missing patch", ())
+            # hard requirement: patch paths must be parseable and confined
+            ok, reason, _files = patch_paths_are_confined(ws, patch)
+            if not ok:
+                return Decision(False, f"APPLY_PATCH rejected: {reason}", ())
             approved.append(a)
 
         elif a.type == "RUN_TESTS":
