@@ -13,28 +13,10 @@ import json
 import os
 
 
-from memory.vector_store import get_vector_memory
-
-def _bucketize_features(features: Dict[str, object], use_semantic: bool = False) -> str:
+def _bucketize_features(features: Dict[str, object]) -> str:
     """
     Turn a small dict of stable task features into a deterministic bucket key.
-    If use_semantic is True, uses vector memory to find a neighbor.
     """
-    if use_semantic:
-        task_info = str(features.get("task_description", ""))
-        repo_info = str(features.get("repo", ""))
-        query = f"Task: {task_info} in Repo: {repo_info}"
-        
-        vector_memory = get_vector_memory()
-        neighbors = vector_memory.retrieve(query, k=1)
-        
-        if neighbors and neighbors[0].relevance > 0.8:
-            # Return the bucket ID of the closest match if stored in metadata
-            match_bucket = neighbors[0].metadata.get("bucket_id")
-            if match_bucket:
-                return match_bucket
-
-    # Fallback to coarse features
     keys = [
         ("repo", str(features.get("repo", ""))[:64]),
         ("lang", str(features.get("lang", "py"))[:8]),
@@ -89,27 +71,11 @@ class ContextualThompsonBandit:
         if arm_id not in self.buckets[bucket]:
             self.buckets[bucket][arm_id] = BetaArm()
 
-    def choose(self, arm_ids: List[str], features: Dict[str, object], use_semantic: bool = True) -> Tuple[str, str]:
+    def choose(self, arm_ids: List[str], features: Dict[str, object]) -> Tuple[str, str]:
         """Choose best arm for given features. Returns (arm_id, bucket)."""
-        bucket = _bucketize_features(features, use_semantic=use_semantic)
+        bucket = _bucketize_features(features)
         rng = self._rng()
 
-        # Cross-Context Weight Sharing:
-        # If bucket is brand new, check if we can borrow from nearest neighbor
-        if bucket not in self.buckets and use_semantic:
-            vector_memory = get_vector_memory()
-            task_query = str(features.get("task_description", ""))
-            neighbors = vector_memory.retrieve(task_query, k=1)
-            
-            if neighbors and neighbors[0].relevance > 0.7:
-                neighbor_bucket = neighbors[0].metadata.get("bucket_id")
-                if neighbor_bucket and neighbor_bucket in self.buckets:
-                    # Clone neighbor's experience to jumpstart learning
-                    self.buckets[bucket] = {
-                        aid: BetaArm(alpha=arm.alpha, beta=arm.beta) 
-                        for aid, arm in self.buckets[neighbor_bucket].items()
-                    }
-        
         best_id = arm_ids[0]
         best_val = -1.0
         for arm_id in arm_ids:
@@ -120,22 +86,11 @@ class ContextualThompsonBandit:
                 best_id = arm_id
 
         self._advance_seed()
-
-        # Persist this mapping in vector store for future semantic lookup
-        if use_semantic:
-            vector_memory = get_vector_memory()
-            vector_memory.store(
-                text=str(features.get("task_description", "")),
-                metadata={"bucket_id": bucket, "repo": str(features.get("repo", ""))}
-            )
-
         return best_id, bucket
 
     def update(self, bucket: str, arm_id: str, reward01: float, multiplier: float = 1.0) -> None:
-        """Update arm with observed reward, optionally scaled by meta-cognitive importance."""
+        """Update arm with observed reward, optionally scaled."""
         self.ensure_arm(bucket, arm_id)
-        # Apply multiplier to the weight of the update
-        # High multiplier = higher learning rate for this specific result
         r = max(0.0, min(1.0, reward01))
         self.buckets[bucket][arm_id].alpha += (r * multiplier)
         self.buckets[bucket][arm_id].beta += ((1.0 - r) * multiplier)

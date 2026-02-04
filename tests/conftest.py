@@ -21,15 +21,3 @@ def mock_llm_infrastructure():
         mock_client.chat.completions.create.return_value = mock_response
         
         yield mock_client
-
-@pytest.fixture(autouse=True)
-def cleanup_singletons():
-    """Clear state of all system singletons between tests."""
-    from security.behavioral_monitor import get_monitor
-    from cognitive.recursive_identity_feedback import get_identity_feedback
-    
-    # Reset known singletons
-    get_monitor().reset()
-    get_identity_feedback().reset()
-    
-    yield
