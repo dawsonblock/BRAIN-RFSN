@@ -14,7 +14,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     from rfsn_run import main as rfsn_run_main
 
     argv = [
-        "rfsn_run.py",
         "--workspace", args.workspace,
         "--task-id", args.task_id,
         "--episodes", str(args.episodes),
@@ -38,7 +37,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     """Replay a ledger and verify chain + gate determinism."""
     from rfsn_replay import main as rfsn_replay_main
-    argv = ["rfsn_replay.py", "--ledger", args.ledger]
+    argv = ["--ledger", args.ledger]
     if args.verbose:
         argv += ["--verbose"]
     return rfsn_replay_main(argv)
@@ -47,7 +46,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_cli(args: argparse.Namespace) -> int:
     """Interactive CLI for the kernel workspace."""
     from rfsn_cli import main as rfsn_cli_main
-    argv = ["rfsn_cli.py", "--workspace", args.workspace]
+    argv = ["run", "--workspace", args.workspace]
     if args.verbose:
         argv += ["--verbose"]
     return rfsn_cli_main(argv)

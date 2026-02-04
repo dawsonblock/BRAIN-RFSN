@@ -5,10 +5,11 @@ import argparse
 from rfsn_kernel.replay import verify_ledger_chain, verify_gate_determinism
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ledger", required=True)
-    args = ap.parse_args()
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args(argv)
 
     ok_chain, errs_chain = verify_ledger_chain(args.ledger)
     ok_gate, errs_gate = verify_gate_determinism(args.ledger)

@@ -122,9 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     return int(args.fn(args))
 
 

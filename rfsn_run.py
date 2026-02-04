@@ -14,7 +14,7 @@ from upstream_learner.outcomes_db import insert_outcome
 from rfsn_kernel.replay import verify_ledger_chain, verify_gate_determinism
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workspace", required=True, help="Path to repo/workspace root")
     ap.add_argument("--task-id", default="local_task")
@@ -22,18 +22,25 @@ def main() -> int:
     ap.add_argument("--outcomes-db", default="./run_logs/outcomes.sqlite3")
     ap.add_argument("--bucket", default="local")
     ap.add_argument("--episodes", type=int, default=3)
+    ap.add_argument("--seed", type=int, default=1337)
     ap.add_argument("--dopamine", type=float, default=0.5)
+    ap.add_argument("--variant", default=None, help="Force a specific proposer variant")
+    ap.add_argument("--max-steps", type=int, default=None, help="Max steps (trajectory mode)")
+    ap.add_argument("--panic-on-deny", action="store_true", help="Enter PANIC mode on gate deny")
+    ap.add_argument("--replay-verify", action="store_true", help="Verify determinism after run")
+    ap.add_argument("--db-path", default=None, help="SQLite outcomes DB path")
     ap.add_argument("--read-path", default="", help="Optional: file path to READ_FILE for variants")
     ap.add_argument("--patch-path", default="", help="Optional: file path to APPLY_PATCH for variants")
     ap.add_argument("--patch-content", default="", help="Optional: content to write for APPLY_PATCH")
-    args = ap.parse_args()
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args(argv)
 
     ws = os.path.abspath(args.workspace)
     ledger_path = os.path.abspath(args.ledger)
     outcomes_db = os.path.abspath(args.outcomes_db)
 
     prompt_bank = default_prompt_bank()
-    bandit = ThompsonBandit(seed=1337)
+    bandit = ThompsonBandit(seed=args.seed)
     variant_ids = [p.variant_id for p in prompt_bank]
 
     for ep in range(args.episodes):
