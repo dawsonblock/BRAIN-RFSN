@@ -1,233 +1,124 @@
 # rfsn_kernel/controller.py
-"""
-Kernel Controller - Executes ONLY approved kernel actions.
-
-IMPORTANT: This controller handles file and test operations ONLY.
-Web, memory, shell, and delegate actions belong to upstream (rfsn_companion).
-
-SECURITY: Implements belt-and-suspenders validation:
-- realpath containment (symlink-safe)
-- read capping (memory exhaustion protection)
-- tests allowlist re-check (defense in depth)
-"""
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Tuple, Dict, Any, List
 import os
-import hashlib
+import subprocess
 
 from .types import StateSnapshot, Decision, Action, ExecResult
-from .envelopes import default_envelopes
-from .sandbox.sandbox_adapter import run_cmd
 from .gate import is_allowed_tests_argv
-from .patch_apply import parse_unified_diff, apply_unified_diff_to_text, normalize_diff_path
 
 
-# ----------------------------
-# Path Security Helpers
-# ----------------------------
-def _resolve_under_workspace(workspace_root: str, p: str) -> str:
-    """
-    Normalize any path to be under workspace_root.
-    Relative paths resolve against workspace_root (not CWD).
-    """
-    ws = os.path.abspath(workspace_root)
-    if not isinstance(p, str) or not p:
-        return ws
-    if os.path.isabs(p):
-        return os.path.abspath(p)
-    return os.path.abspath(os.path.join(ws, p))
+def _abspath(workspace: str, p: str) -> str:
+    return os.path.abspath(os.path.join(workspace, p))
 
 
-def _realpath_is_under(workspace_root: str, candidate_path: str) -> bool:
+def _is_in_workspace(workspace: str, abs_path: str) -> bool:
+    ws = os.path.abspath(workspace)
+    ap = os.path.abspath(abs_path)
+    try:
+        common = os.path.commonpath([ws, ap])
+    except ValueError:
+        return False
+    return common == ws
+
+
+def _read_file(path: str, cap_bytes: int = 512_000) -> str:
+    with open(path, "rb") as f:
+        data = f.read(cap_bytes + 1)
+    if len(data) > cap_bytes:
+        raise RuntimeError(f"read cap exceeded: {cap_bytes} bytes")
+    return data.decode("utf-8", errors="replace")
+
+
+def _write_file(path: str, text: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _apply_patch_minimal(workspace: str, patch: str) -> Dict[str, Any]:
     """
-    Symlink-safe containment check.
-    Resolves symlinks and ensures path stays under workspace_root.
+    Minimal safe patching:
+    - only supports unified diff against files inside workspace
+    - calls `git apply` with strict flags if git exists
     """
-    ws = os.path.realpath(os.path.abspath(workspace_root))
-    cp = os.path.realpath(os.path.abspath(candidate_path))
-    return cp == ws or cp.startswith(ws + os.sep)
+    ws = os.path.abspath(workspace)
+    if not os.path.isdir(os.path.join(ws, ".git")):
+        return {"applied": False, "reason": "workspace is not a git repo (.git missing)"}
+
+    # defense-in-depth: disallow patch that mentions absolute paths
+    for bad in ("/", "\\"):
+        if "\n--- " + bad in patch or "\n+++ " + bad in patch:
+            return {"applied": False, "reason": "patch contains absolute paths"}
+
+    proc = subprocess.run(
+        ["git", "apply", "--whitespace=nowarn", "--reject", "--recount", "-"],
+        input=patch.encode("utf-8", errors="replace"),
+        cwd=ws,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return {
+        "applied": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout.decode("utf-8", errors="replace")[-4000:],
+        "stderr": proc.stderr.decode("utf-8", errors="replace")[-4000:],
+    }
+
+
+def _run_tests(workspace: str, argv: List[str], timeout_s: int = 600) -> Dict[str, Any]:
+    if not is_allowed_tests_argv(argv):
+        raise RuntimeError("RUN_TESTS argv failed allowlist re-check")
+    ws = os.path.abspath(workspace)
+    proc = subprocess.run(
+        argv,
+        cwd=ws,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_s,
+    )
+    return {
+        "returncode": proc.returncode,
+        "stdout": proc.stdout.decode("utf-8", errors="replace")[-8000:],
+        "stderr": proc.stderr.decode("utf-8", errors="replace")[-8000:],
+        "ok": proc.returncode == 0,
+    }
 
 
 def execute_decision(state: StateSnapshot, decision: Decision) -> Tuple[ExecResult, ...]:
-    envs = default_envelopes(state.workspace_root)
-    results = []
+    if not decision.allowed:
+        raise RuntimeError(f"decision denied: {decision.reason}")
+
+    ws = os.path.abspath(state.workspace)
+    results: list[ExecResult] = []
 
     for a in decision.approved_actions:
-        spec = envs.get(a.name)
-        timeout_ms = spec.max_wall_ms if spec else 30_000
-        max_bytes = spec.max_bytes if spec else 1_000_000
-        results.append(_execute_action(state, a, timeout_ms, max_bytes))
+        if a.type == "READ_FILE":
+            rel = a.payload["path"]
+            ap = _abspath(ws, rel)
+            if not _is_in_workspace(ws, ap):
+                raise RuntimeError(f"READ_FILE escapes workspace: {rel}")
+            text = _read_file(ap)
+            results.append(ExecResult(True, a, {"path": rel, "text": text}))
+
+        elif a.type == "WRITE_FILE":
+            rel = a.payload["path"]
+            ap = _abspath(ws, rel)
+            if not _is_in_workspace(ws, ap):
+                raise RuntimeError(f"WRITE_FILE escapes workspace: {rel}")
+            _write_file(ap, a.payload["text"])
+            results.append(ExecResult(True, a, {"path": rel, "written": True}))
+
+        elif a.type == "APPLY_PATCH":
+            out = _apply_patch_minimal(ws, a.payload["patch"])
+            results.append(ExecResult(bool(out.get("applied")), a, out))
+
+        elif a.type == "RUN_TESTS":
+            out = _run_tests(ws, a.payload["argv"])
+            results.append(ExecResult(bool(out.get("ok")), a, out))
+
+        else:
+            results.append(ExecResult(False, a, {"error": "unknown action type"}))
 
     return tuple(results)
-
-
-def _write_last_tests_artifact(workspace_root: str, stdout: str, stderr: str) -> None:
-    ws = os.path.abspath(workspace_root)
-    out_dir = os.path.join(ws, ".rfsn")
-    os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, "last_tests.txt")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("=== STDOUT ===\n")
-        f.write(stdout or "")
-        f.write("\n\n=== STDERR ===\n")
-        f.write(stderr or "")
-        f.write("\n")
-
-
-def _execute_action(state: StateSnapshot, action: Action, timeout_ms: int, max_bytes: int) -> ExecResult:
-    """
-    Execute a kernel-approved action with defense-in-depth security checks.
-    
-    Supported actions (kernel-only):
-    - READ_FILE: Read file contents (capped to max_bytes)
-    - WRITE_FILE: Write/create file
-    - APPLY_PATCH: Apply patch (currently as file replace)
-    - RUN_TESTS: Execute test suite (allowlisted argv only)
-    """
-    ws = os.path.abspath(state.workspace_root)
-
-    # === READ_FILE ===
-    if action.name == "READ_FILE":
-        raw_path = action.args.get("path", "")
-        abspath = _resolve_under_workspace(ws, raw_path)
-        
-        # SECURITY: realpath containment check
-        if not _realpath_is_under(ws, abspath):
-            return ExecResult(action=action, ok=False, stderr="path_escape", exit_code=1)
-        
-        try:
-            # SECURITY: cap reads by envelope max_bytes
-            with open(abspath, "r", encoding="utf-8") as f:
-                data = f.read(max_bytes)
-            return ExecResult(action=action, ok=True, stdout=data)
-        except Exception as e:
-            return ExecResult(action=action, ok=False, stderr=str(e), exit_code=1)
-
-    # === WRITE_FILE ===
-    if action.name == "WRITE_FILE":
-        raw_path = action.args.get("path", "")
-        abspath = _resolve_under_workspace(ws, raw_path)
-        
-        # SECURITY: realpath containment check (on parent for new files)
-        parent = os.path.dirname(abspath)
-        if os.path.exists(abspath):
-            check_path = abspath
-        else:
-            # For new files, check parent exists and is under workspace
-            check_path = parent if os.path.exists(parent) else ws
-        if not _realpath_is_under(ws, check_path):
-            return ExecResult(action=action, ok=False, stderr="path_escape", exit_code=1)
-        
-        content = str(action.args.get("content", ""))
-        try:
-            os.makedirs(parent, exist_ok=True)
-            with open(abspath, "w", encoding="utf-8") as f:
-                f.write(content)
-            return ExecResult(action=action, ok=True, stdout="WROTE_FILE")
-        except Exception as e:
-            return ExecResult(action=action, ok=False, stderr=str(e), exit_code=1)
-
-    # === APPLY_PATCH ===
-    if action.name == "APPLY_PATCH":
-        diff = action.args.get("diff")
-        if not isinstance(diff, str) or not diff.strip():
-            return ExecResult(action=action, ok=False, stderr="missing_diff", exit_code=2)
-
-        files, _changed = parse_unified_diff(diff)
-        if not files:
-            return ExecResult(action=action, ok=False, stderr="no_files_in_diff", exit_code=2)
-
-        # Optional: base_sha256_map for conflict detection
-        base_map = action.args.get("base_sha256_map")
-        if base_map is not None and not isinstance(base_map, dict):
-            return ExecResult(action=action, ok=False, stderr="invalid_base_sha256_map", exit_code=2)
-
-        patched_files = []
-        for old_path, new_path, file_diff_text in files:
-            # Normalize diff paths (strip a/ b/ prefixes, handle /dev/null)
-            np = normalize_diff_path(new_path)
-            if np in ("/dev/null", "dev/null"):
-                # Deletion - not supported for safety
-                return ExecResult(action=action, ok=False, stderr="deletes_not_supported", exit_code=2)
-
-            abspath = _resolve_under_workspace(ws, np)
-            
-            # SECURITY: realpath containment check
-            parent = os.path.dirname(abspath)
-            if os.path.exists(abspath):
-                check_path = abspath
-            else:
-                check_path = parent if os.path.exists(parent) else ws
-            if not _realpath_is_under(ws, check_path):
-                return ExecResult(action=action, ok=False, stderr=f"path_escape:{np}", exit_code=1)
-
-            # Read original content (or empty for new files)
-            old_text = ""
-            if os.path.exists(abspath):
-                try:
-                    with open(abspath, "r", encoding="utf-8") as f:
-                        old_text = f.read()
-                except Exception as e:
-                    return ExecResult(action=action, ok=False, stderr=f"read_error:{np}:{e}", exit_code=1)
-
-            # Base hash pinning check (if provided)
-            if base_map is not None:
-                expected = base_map.get(np)
-                if expected is None:
-                    return ExecResult(action=action, ok=False, stderr=f"missing_base_sha256:{np}", exit_code=2)
-                got = hashlib.sha256(old_text.encode("utf-8")).hexdigest()
-                if got != expected:
-                    return ExecResult(action=action, ok=False, stderr=f"base_sha256_mismatch:{np}", exit_code=2)
-
-            # Apply the diff
-            try:
-                new_text = apply_unified_diff_to_text(old_text, file_diff_text)
-            except ValueError as e:
-                return ExecResult(action=action, ok=False, stderr=f"patch_apply_failed:{np}:{e}", exit_code=2)
-            except Exception as e:
-                return ExecResult(action=action, ok=False, stderr=f"patch_error:{np}:{type(e).__name__}", exit_code=2)
-
-            # Write the patched file
-            try:
-                os.makedirs(parent, exist_ok=True)
-                with open(abspath, "w", encoding="utf-8") as f:
-                    f.write(new_text)
-                patched_files.append(np)
-            except Exception as e:
-                return ExecResult(action=action, ok=False, stderr=f"write_error:{np}:{e}", exit_code=1)
-
-        return ExecResult(
-            action=action, 
-            ok=True, 
-            stdout=f"patched_files={len(patched_files)}: {', '.join(patched_files)}"
-        )
-
-    # === RUN_TESTS ===
-    if action.name == "RUN_TESTS":
-        argv = action.args.get("argv", ["python", "-m", "pytest", "-q"])
-        
-        # SECURITY: re-check allowlist at execution time (belt + suspenders)
-        if not isinstance(argv, list) or not all(isinstance(x, str) for x in argv):
-            return ExecResult(action=action, ok=False, stderr="bad_tests_argv", exit_code=1)
-        if not is_allowed_tests_argv(argv):
-            return ExecResult(action=action, ok=False, stderr="tests_argv_not_allowlisted", exit_code=1)
-        
-        out = run_cmd(argv=argv, cwd=ws, timeout_ms=timeout_ms)
-        _write_last_tests_artifact(ws, out.get("stdout", ""), out.get("stderr", ""))
-        return ExecResult(
-            action=action,
-            ok=bool(out.get("ok", False)),
-            stdout=str(out.get("stdout", "")),
-            stderr=str(out.get("stderr", "")),
-            exit_code=int(out.get("exit_code", 0)),
-            duration_ms=int(out.get("duration_ms", 0)),
-            artifacts=dict(out.get("artifacts", {})),
-        )
-
-    # NOTE: WEB_SEARCH, BROWSE_URL, SHELL_EXEC, REMEMBER, RECALL, DELEGATE
-    # are NOT kernel actions. They have been moved to upstream (rfsn_companion).
-    # If we reach here, the gate should have already denied the action.
-
-    return ExecResult(action=action, ok=False, stderr=f"unimplemented_action:{action.name}", exit_code=2)
-

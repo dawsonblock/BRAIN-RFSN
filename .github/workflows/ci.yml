@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   push:
@@ -9,25 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
+      - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-
-      - name: Run unit tests
+          pip install -e .[dev]
+      - name: Run tests
         run: |
-          pytest -q --tb=short
-
-      - name: Run security tests
-        run: |
-          pytest tests/test_gate_security.py tests/test_gate*.py -v
-
-      - name: Kernel smoke test (verify imports)
-        run: |
-          python -c "from rfsn_kernel.gate import gate; from rfsn_kernel.policy import DEFAULT_POLICY; print('Kernel OK')"
+          pytest -q

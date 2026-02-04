@@ -1,91 +1,63 @@
 # rfsn_kernel/types.py
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, Tuple, Literal
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Literal, Tuple
 import json
 import hashlib
 
 
-DecisionStatus = Literal["ALLOW", "DENY"]
-KernelMode = Literal["NORMAL", "PANIC"]
+ActionType = Literal["READ_FILE", "WRITE_FILE", "APPLY_PATCH", "RUN_TESTS"]
 
 
 @dataclass(frozen=True)
 class StateSnapshot:
-    """
-    Deterministic snapshot inputs for gate().
-
-    Keep this minimal and stable. The kernel should not depend on live world state
-    that changes nondeterministically unless you explicitly record it into the ledger.
-    """
-    task_id: str
-    workspace_root: str
-    step: int = 0
-    budget_actions_remaining: int = 50
-    budget_wall_ms_remaining: int = 300_000  # 5 min default
-    mode: KernelMode = "NORMAL"  # Kernel-native panic field (no cognitive leakage)
-    notes: Dict[str, Any] = field(default_factory=dict)
+    workspace: str
+    notes: Dict[str, Any]
 
 
 @dataclass(frozen=True)
 class Action:
-    """
-    Typed action with explicit name and args.
-    The gate validates name+args against envelopes.
-    """
-    name: str
-    args: Dict[str, Any] = field(default_factory=dict)
+    type: ActionType
+    payload: Dict[str, Any]
 
 
 @dataclass(frozen=True)
 class Proposal:
-    """
-    Companion output. Must be side-effect free to produce.
-    """
-    proposal_id: str
+    """Upstream proposes a sequence of actions. Kernel decides allow/deny and executes if allowed."""
     actions: Tuple[Action, ...]
-    rationale: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    meta: Dict[str, Any]
 
 
 @dataclass(frozen=True)
 class Decision:
-    status: DecisionStatus
-    reasons: Tuple[str, ...] = ()
-    approved_actions: Tuple[Action, ...] = ()
-    denied_actions: Tuple[Action, ...] = ()
-    transforms: Dict[str, Any] = field(default_factory=dict)  # optional rewrites
+    allowed: bool
+    reason: str
+    approved_actions: Tuple[Action, ...]
 
 
 @dataclass(frozen=True)
 class ExecResult:
-    action: Action
     ok: bool
-    stdout: str = ""
-    stderr: str = ""
-    exit_code: int = 0
-    duration_ms: int = 0
-    artifacts: Dict[str, Any] = field(default_factory=dict)
+    action: Action
+    output: Dict[str, Any]
+
+
+def dataclass_to_dict(x: Any) -> Any:
+    if hasattr(x, "__dataclass_fields__"):
+        return asdict(x)
+    if isinstance(x, tuple):
+        return [dataclass_to_dict(v) for v in x]
+    if isinstance(x, list):
+        return [dataclass_to_dict(v) for v in x]
+    if isinstance(x, dict):
+        return {k: dataclass_to_dict(v) for k, v in x.items()}
+    return x
 
 
 def canonical_json(obj: Any) -> str:
-    """
-    Canonical JSON for hashing/replay consistency.
-    - sort keys
-    - no whitespace
-    """
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
-
-
-def dataclass_to_dict(dc: Any) -> Any:
-    """
-    Safe conversion for dataclasses to JSON-serializable dict.
-    """
-    if hasattr(dc, "__dataclass_fields__"):
-        return asdict(dc)
-    return dc

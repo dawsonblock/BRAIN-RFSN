@@ -1,23 +1,23 @@
 # tests/test_gate_determinism.py
 from __future__ import annotations
 
-import os
 from rfsn_kernel.types import StateSnapshot, Proposal, Action
 from rfsn_kernel.gate import gate
 
 
-def test_gate_is_deterministic():
-    ws = os.path.abspath(os.getcwd())
+def test_gate_is_deterministic_for_same_inputs(tmp_path):
+    ws = tmp_path
+    (ws / "x.txt").write_text("hi", encoding="utf-8")
 
-    state = StateSnapshot(task_id="t", workspace_root=ws, step=0, budget_actions_remaining=10)
+    state = StateSnapshot(workspace=str(ws), notes={})
     proposal = Proposal(
-        proposal_id="p1",
         actions=(
-            Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),
+            Action("READ_FILE", {"path": "x.txt"}),
+            Action("RUN_TESTS", {"argv": ["pytest", "-q"]}),
         ),
+        meta={},
     )
 
-    d1 = gate(state, proposal)
-    d2 = gate(state, proposal)
-
-    assert d1 == d2
+    d0 = gate(state, proposal)
+    for _ in range(20):
+        assert gate(state, proposal) == d0

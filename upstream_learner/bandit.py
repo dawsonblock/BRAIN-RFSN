@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict
 import random
 
 
@@ -12,12 +12,10 @@ class BetaArm:
     beta: float = 1.0
 
     def sample(self, rng: random.Random) -> float:
-        # rng.betavariate is deterministic given seed
         return rng.betavariate(self.alpha, self.beta)
 
-    def update(self, reward: float) -> None:
-        # reward in [0,1]
-        r = max(0.0, min(1.0, reward))
+    def update(self, reward_01: float) -> None:
+        r = max(0.0, min(1.0, float(reward_01)))
         self.alpha += r
         self.beta += (1.0 - r)
 
@@ -27,34 +25,27 @@ class ThompsonBandit:
     seed: int = 1337
     arms: Dict[str, BetaArm] = field(default_factory=dict)
 
-    def ensure_arm(self, arm_id: str) -> None:
+    def ensure(self, arm_id: str) -> None:
         if arm_id not in self.arms:
             self.arms[arm_id] = BetaArm()
 
-    def choose(self, arm_ids: List[str], dopamine: float = 0.5) -> str:
+    def choose(self) -> str:
+        if not self.arms:
+            # default single arm
+            self.ensure("default")
         rng = random.Random(self.seed)
-        best_id = arm_ids[0]
+        best_id = None
         best_val = -1.0
-        
-        # Adaptive Entropy: High dopamine increases exploration variance
-        exploration_noise = max(0.0, dopamine - 0.5) * 0.2 # up to 0.1 jitter
-        
-        for arm_id in arm_ids:
-            self.ensure_arm(arm_id)
-            v = self.arms[arm_id].sample(rng)
-            
-            # Apply dopamine-scaled noise
-            if exploration_noise > 0:
-                v += rng.uniform(-exploration_noise, exploration_noise)
-                v = max(0.0, min(1.0, v))
-
+        for arm_id, arm in self.arms.items():
+            v = arm.sample(rng)
             if v > best_val:
                 best_val = v
                 best_id = arm_id
-        # advance seed deterministically to avoid choosing same forever
-        self.seed = (self.seed * 1103515245 + 12345) & 0x7FFFFFFF
-        return best_id
+        return str(best_id)
 
-    def update(self, arm_id: str, reward: float) -> None:
-        self.ensure_arm(arm_id)
-        self.arms[arm_id].update(reward)
+    def update(self, arm_id: str, reward_01: float) -> None:
+        self.ensure(arm_id)
+        self.arms[arm_id].update(reward_01)
+
+    def bump_seed(self) -> None:
+        self.seed += 1

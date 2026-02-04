@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 from rfsn_kernel.types import StateSnapshot, Proposal
-from .proposer_variants import select_proposer
+from .proposers.deterministic_stub import propose_deterministic
 
 
 def propose(state: StateSnapshot) -> Proposal:
-    variant = str(state.notes.get("prompt_variant", "v0_minimal"))
-    fn = select_proposer(variant)
-    return fn(state)
+    """
+    Companion layer chooses *how* to propose.
+    This minimal build is deterministic, so kernel/replay tests are stable.
+    Swap propose_deterministic() with an LLM-backed proposer later.
+    """
+    return propose_deterministic(state)
