@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 import uuid
 
 from rfsn_kernel.types import StateSnapshot, Proposal, Action, ExecResult
@@ -91,6 +91,7 @@ def execute_plan(
             step=state.step + 1,
             budget_actions_remaining=state.budget_actions_remaining - 1,
             budget_wall_ms_remaining=state.budget_wall_ms_remaining,
+            mode=state.mode,  # Preserve kernel mode
             notes=state.notes,
         )
 
@@ -106,7 +107,6 @@ def _execute_step(
     state: StateSnapshot,
     ledger_path: str,
     policy: KernelPolicy | None = None,
-    brain_state: Optional[Any] = None,
 ) -> StepResult:
     """Execute a single plan step through the kernel."""
 

@@ -8,6 +8,7 @@ import hashlib
 
 
 DecisionStatus = Literal["ALLOW", "DENY"]
+KernelMode = Literal["NORMAL", "PANIC"]
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class StateSnapshot:
     step: int = 0
     budget_actions_remaining: int = 50
     budget_wall_ms_remaining: int = 300_000  # 5 min default
+    mode: KernelMode = "NORMAL"  # Kernel-native panic field (no cognitive leakage)
     notes: Dict[str, Any] = field(default_factory=dict)
 
 

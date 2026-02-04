@@ -15,7 +15,8 @@ def test_reflexive_safety():
         
         print("\n[SCENARIO 1] High Cortisol (PANIC Mode)")
         # A proposal with 2 actions should be DENIED in Panic mode
-        snapshot = StateSnapshot(task_id="test", workspace_root=".", notes={"mode": "PANIC"})
+        # NOTE: Using state.mode="PANIC" instead of brain_state (kernel-native approach)
+        snapshot = StateSnapshot(task_id="test", workspace_root=".", mode="PANIC")
         proposal = Proposal(
             proposal_id="multi_action",
             actions=(
@@ -24,25 +25,24 @@ def test_reflexive_safety():
             )
         )
         
-        # We need to simulate the brain_state object too
-        class MockBrainState:
-            mode = "PANIC"
-            
-        decision = gate(snapshot, proposal, brain_state=MockBrainState())
+        # No brain_state needed - mode is in StateSnapshot now
+        decision = gate(snapshot, proposal)
         print(f"Decision Status (Multi-action in PANIC): {decision.status}")
         print(f"Reasons: {decision.reasons}")
         assert decision.status == "DENY"
         assert "reflexive:panic_lockdown:single_action_only" in decision.reasons
 
-        # A proposal with network-enabled action should be DENIED
+        # A proposal with a non-kernel action should be DENIED as unknown_action
+        # (WEB_SEARCH is no longer a kernel action)
         proposal_net = Proposal(
             proposal_id="net_action",
             actions=(Action(name="WEB_SEARCH", args={"query": "test"}),)
         )
-        decision_net = gate(snapshot, proposal_net, brain_state=MockBrainState())
-        print(f"Decision Status (Network in PANIC): {decision_net.status}")
+        decision_net = gate(snapshot, proposal_net)
+        print(f"Decision Status (WEB_SEARCH in PANIC): {decision_net.status}")
         assert decision_net.status == "DENY"
-        assert any("panic_lockdown:action_denied:WEB_SEARCH" in r for r in decision_net.reasons)
+        # Now denied as unknown action (not in kernel envelopes)
+        assert any("unknown_action:WEB_SEARCH" in r for r in decision_net.reasons)
 
     # 2. Test Adaptive Bandit (Dopamine Exploration)
     print("\n[SCENARIO 2] High Dopamine (Adaptive Exploration)")

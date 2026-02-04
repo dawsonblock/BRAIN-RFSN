@@ -1,4 +1,10 @@
 # rfsn_kernel/controller.py
+"""
+Kernel Controller - Executes ONLY approved kernel actions.
+
+IMPORTANT: This controller handles file and test operations ONLY.
+Web, memory, shell, and delegate actions belong to upstream (rfsn_companion).
+"""
 from __future__ import annotations
 
 from typing import Tuple
@@ -35,9 +41,18 @@ def _write_last_tests_artifact(workspace_root: str, stdout: str, stderr: str) ->
 
 
 def _execute_action(state: StateSnapshot, action: Action, timeout_ms: int) -> ExecResult:
+    """
+    Execute a kernel-approved action.
+    
+    Supported actions (kernel-only):
+    - READ_FILE: Read file contents
+    - WRITE_FILE: Write/create file
+    - APPLY_PATCH: Apply patch (currently as file replace)
+    - RUN_TESTS: Execute test suite
+    """
     ws = os.path.abspath(state.workspace_root)
 
-    # === File Operations ===
+    # === File Operations (Kernel-Only) ===
     if action.name == "READ_FILE":
         path = os.path.abspath(action.args["path"])
         try:
@@ -82,75 +97,8 @@ def _execute_action(state: StateSnapshot, action: Action, timeout_ms: int) -> Ex
             artifacts=dict(out.get("artifacts", {})),
         )
 
-    # === Web Operations ===
-    if action.name == "WEB_SEARCH":
-        from .tools.web import web_search
-        query = str(action.args.get("query", ""))
-        num_results = int(action.args.get("num_results", 5))
-        result = web_search(query, num_results)
-        if result.error:
-            return ExecResult(action=action, ok=False, stderr=result.error, exit_code=1)
-        output = "\n".join([f"[{r.title}]({r.url})" for r in result.results])
-        return ExecResult(action=action, ok=True, stdout=output)
-
-    if action.name == "BROWSE_URL":
-        from .tools.web import browse_url
-        url = str(action.args.get("url", ""))
-        max_chars = int(action.args.get("max_chars", 50_000))
-        result = browse_url(url, max_chars)
-        if result.error:
-            return ExecResult(action=action, ok=False, stderr=result.error, exit_code=1)
-        return ExecResult(action=action, ok=True, stdout=result.content)
-
-    # === Shell Operations ===
-    if action.name == "SHELL_EXEC":
-        from .tools.shell import shell_exec
-        command = str(action.args.get("command", ""))
-        cwd = action.args.get("cwd", ws)
-        timeout_sec = timeout_ms // 1000
-        result = shell_exec(command, cwd=cwd, timeout_seconds=timeout_sec)
-        if result.error:
-            return ExecResult(action=action, ok=False, stderr=result.error, exit_code=-1)
-        return ExecResult(
-            action=action,
-            ok=(result.exit_code == 0),
-            stdout=result.stdout,
-            stderr=result.stderr,
-            exit_code=result.exit_code,
-        )
-
-    # === Memory Operations ===
-    if action.name == "REMEMBER":
-        from .tools.memory import remember
-        content = str(action.args.get("content", ""))
-        metadata = action.args.get("metadata", {})
-        store_path = os.path.join(ws, ".rfsn", "memory")
-        result = remember(content, metadata, store_path)
-        if not result.success:
-            return ExecResult(action=action, ok=False, stderr=result.error or "Unknown error", exit_code=1)
-        return ExecResult(action=action, ok=True, stdout=f"STORED:{result.chunk_id}")
-
-    if action.name == "RECALL":
-        from .tools.memory import recall
-        query = str(action.args.get("query", ""))
-        k = int(action.args.get("k", 5))
-        store_path = os.path.join(ws, ".rfsn", "memory")
-        result = recall(query, k, store_path)
-        if result.error:
-            return ExecResult(action=action, ok=False, stderr=result.error, exit_code=1)
-        chunks = [f"[{c.chunk_id}] {c.content[:200]}..." for c in result.chunks]
-        return ExecResult(action=action, ok=True, stdout="\n---\n".join(chunks) if chunks else "NO_MATCHES")
-
-    # === Delegate (placeholder) ===
-    if action.name == "DELEGATE":
-        # Sub-agent delegation - requires full agent loop
-        # For now, return a placeholder
-        task = str(action.args.get("task", ""))
-        return ExecResult(
-            action=action,
-            ok=False,
-            stderr=f"DELEGATE not yet implemented. Task: {task[:100]}",
-            exit_code=2,
-        )
+    # NOTE: WEB_SEARCH, BROWSE_URL, SHELL_EXEC, REMEMBER, RECALL, DELEGATE
+    # are NOT kernel actions. They have been moved to upstream (rfsn_companion).
+    # If we reach here, the gate should have already denied the action.
 
     return ExecResult(action=action, ok=False, stderr=f"unimplemented_action:{action.name}", exit_code=2)

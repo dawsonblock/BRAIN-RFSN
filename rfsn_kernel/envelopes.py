@@ -20,10 +20,16 @@ class EnvelopeSpec:
 
 
 def default_envelopes(workspace_root: str) -> Dict[str, EnvelopeSpec]:
+    """
+    Kernel-only action envelopes.
+    
+    IMPORTANT: Web, memory, shell, and delegate actions are NOT kernel actions.
+    They belong to upstream (rfsn_companion) and should never pass through the gate.
+    """
     ws = os.path.abspath(workspace_root)
 
     envs: Dict[str, EnvelopeSpec] = {
-        # === File Operations ===
+        # === File Operations (Kernel-Only) ===
         "RUN_TESTS": EnvelopeSpec(
             name="RUN_TESTS",
             max_wall_ms=180_000,
@@ -57,52 +63,8 @@ def default_envelopes(workspace_root: str) -> Dict[str, EnvelopeSpec]:
             max_bytes=2_000_000,
             max_lines_changed=2_000,
         ),
-        # === Web Actions ===
-        "WEB_SEARCH": EnvelopeSpec(
-            name="WEB_SEARCH",
-            max_wall_ms=30_000,
-            allow_network=True,
-            rate_limit_per_min=10,
-            max_bytes=100_000,  # Max query size
-        ),
-        "BROWSE_URL": EnvelopeSpec(
-            name="BROWSE_URL",
-            max_wall_ms=60_000,
-            allow_network=True,
-            rate_limit_per_min=20,
-            max_bytes=500_000,  # Max response size to store
-            domain_allowlist=(),  # Empty = all domains allowed (can be restricted)
-        ),
-        # === Shell Execution ===
-        "SHELL_EXEC": EnvelopeSpec(
-            name="SHELL_EXEC",
-            max_wall_ms=120_000,
-            allow_network=False,
-            allow_shell=True,
-            path_roots=(ws,),
-            max_bytes=1_000_000,
-        ),
-        # === Memory Actions ===
-        "REMEMBER": EnvelopeSpec(
-            name="REMEMBER",
-            max_wall_ms=5_000,
-            allow_network=False,
-            max_bytes=100_000,  # Max memory chunk
-        ),
-        "RECALL": EnvelopeSpec(
-            name="RECALL",
-            max_wall_ms=10_000,
-            allow_network=False,
-            max_bytes=50_000,  # Max query size
-        ),
-        # === Agent Actions ===
-        "DELEGATE": EnvelopeSpec(
-            name="DELEGATE",
-            max_wall_ms=300_000,  # 5 min for sub-agent
-            allow_network=True,
-            allow_shell=True,
-            rate_limit_per_min=5,  # Limit spawning
-        ),
+        # NOTE: WEB_SEARCH, BROWSE_URL, SHELL_EXEC, REMEMBER, RECALL, DELEGATE
+        # have been removed from kernel. They belong to upstream_learner/rfsn_companion.
     }
 
     return envs

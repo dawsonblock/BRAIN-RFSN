@@ -1,7 +1,7 @@
 # rfsn_kernel/gate.py
 from __future__ import annotations
 
-from typing import List, Set, Optional, Any
+from typing import List, Set
 import os
 
 from .types import StateSnapshot, Proposal, Action, Decision
@@ -17,13 +17,13 @@ def gate(
     state: StateSnapshot,
     proposal: Proposal,
     policy: KernelPolicy | None = None,
-    brain_state: Optional[Any] = None,
 ) -> Decision:
     """
     Pure, deterministic validator.
     - No I/O
     - No randomness
     - No clocks
+    - No cognitive leakage (brain_state removed)
     """
     if policy is None:
         policy = DEFAULT_POLICY
@@ -34,13 +34,8 @@ def gate(
     denied: List[Action] = []
 
     # --- REFLEXIVE SAFETY (HARD OVERRIDES) ---
-    is_panic = False
-    if brain_state and hasattr(brain_state, "mode") and brain_state.mode == "PANIC":
-        is_panic = True
-    
-    # Check notes for stress/panic if brain_state not passed directly
-    if not is_panic and state.notes.get("mode") == "PANIC":
-        is_panic = True
+    # Panic mode is now a first-class kernel concept via state.mode
+    is_panic = state.mode == "PANIC"
 
     if is_panic:
         # Emergency Lockdown: Max 1 action per proposal
@@ -95,12 +90,12 @@ def gate(
         # Reflexive Overrides
         deny_network = policy.deny_network
         if is_panic:
-            deny_network = True # Force isolation in panic
-            if a.name not in {"READ_FILE", "RUN_TESTS", "RECALL", "REMEMBER"}:
-                 # In panic, only allow read, search or test (for recovery/debugging)
-                 reasons.append(f"reflexive:panic_lockdown:action_denied:{a.name}")
-                 denied.append(a)
-                 continue
+            deny_network = True  # Force isolation in panic
+            # In panic, only allow kernel-only read/test actions (no write)
+            if a.name not in {"READ_FILE", "RUN_TESTS"}:
+                reasons.append(f"reflexive:panic_lockdown:action_denied:{a.name}")
+                denied.append(a)
+                continue
 
         # Explicitly deny RUN_CMD unless policy allows it
         if a.name == "RUN_CMD" and not policy.allow_run_cmd:
