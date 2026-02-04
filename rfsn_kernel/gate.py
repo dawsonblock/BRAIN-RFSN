@@ -13,6 +13,82 @@ def _norm_path(p: str) -> str:
     return os.path.abspath(p)
 
 
+# ----------------------------
+# RUN_TESTS allowlist (HARD SECURITY BOUNDARY)
+# ----------------------------
+def _normalize_test_argv(argv: List[str]) -> List[str]:
+    """Normalize argv for robust matching."""
+    return [str(x).strip() for x in argv]
+
+
+def is_allowed_tests_argv(argv: List[str]) -> bool:
+    """
+    Only allow a small set of safe, deterministic test invocations.
+    No arbitrary python -c, no arbitrary binaries, no curl, no rm, etc.
+    
+    Allowlisted forms:
+      python -m pytest -q [optional flags]
+      python -m pytest -q -k <expr>
+      python -m pytest -q --maxfail=N
+    """
+    a = _normalize_test_argv(argv)
+    if not a:
+        return False
+
+    # Require: python -m pytest (at minimum)
+    if len(a) < 3:
+        return False
+    if a[0] != "python" or a[1] != "-m" or a[2] != "pytest":
+        return False
+
+    # Allowed flags (subset)
+    allowed_flags = {"-q", "-x", "--tb=short", "--tb=no", "-v"}
+    
+    i = 3
+    saw_q = False
+    while i < len(a):
+        tok = a[i]
+        
+        # Check for -q flag
+        if tok == "-q":
+            saw_q = True
+            i += 1
+            continue
+        
+        # Allow simple flags
+        if tok in allowed_flags:
+            i += 1
+            continue
+        
+        # Allow -k <expr> for test selection
+        if tok == "-k":
+            if i + 1 >= len(a):
+                return False
+            expr = a[i + 1]
+            if not isinstance(expr, str) or not expr:
+                return False
+            # Block injection attempts
+            if any(c in expr for c in [";", "|", "&", "`", "$", ">"]):
+                return False
+            i += 2
+            continue
+        
+        # Allow --maxfail=N
+        if tok.startswith("--maxfail="):
+            try:
+                int(tok.split("=")[1])
+                i += 1
+                continue
+            except (ValueError, IndexError):
+                return False
+        
+        # Disallow everything else (paths, plugins, --pyargs, -c, etc.)
+        return False
+    
+    # Require -q to limit output
+    return saw_q
+
+
 def gate(
     state: StateSnapshot,
     proposal: Proposal,
@@ -28,6 +104,7 @@ def gate(
     if policy is None:
         policy = DEFAULT_POLICY
     envs = default_envelopes(state.workspace_root)
+    ws = os.path.abspath(state.workspace_root)
 
     reasons: List[str] = []
     approved: List[Action] = []
@@ -72,13 +149,19 @@ def gate(
                 reasons.append("order:run_tests_before_last_write")
 
     # 4) Read-before-write rule (same proposal)
+    # Normalize paths relative to workspace_root (not CWD)
+    def _resolve_path(p: str) -> str:
+        if os.path.isabs(p):
+            return os.path.abspath(p)
+        return os.path.abspath(os.path.join(ws, p))
+
     read_paths: Set[str] = set()
     write_paths: Set[str] = set()
     for a in proposal.actions:
         if a.name == "READ_FILE" and "path" in a.args:
-            read_paths.add(_norm_path(str(a.args["path"])))
+            read_paths.add(_resolve_path(str(a.args["path"])))
         if a.name in write_names and "path" in a.args:
-            write_paths.add(_norm_path(str(a.args["path"])))
+            write_paths.add(_resolve_path(str(a.args["path"])))
 
     # Require read of each written path in the same proposal
     missing_reads = sorted(p for p in write_paths if p not in read_paths)
@@ -124,11 +207,28 @@ def gate(
             denied.append(a)
             continue
 
-        v = validate_action_against_envelope(spec, a.args)
+        # Resolve paths relative to workspace_root before envelope validation
+        action_args_resolved = dict(a.args)
+        if "path" in action_args_resolved:
+            action_args_resolved["path"] = _resolve_path(str(action_args_resolved["path"]))
+
+        v = validate_action_against_envelope(spec, action_args_resolved)
         if v is not None:
             reasons.append(f"envelope:{a.name}:{v}")
             denied.append(a)
             continue
+
+        # CRITICAL: RUN_TESTS allowlist enforcement
+        if a.name == "RUN_TESTS":
+            argv = a.args.get("argv")
+            if not isinstance(argv, list) or not all(isinstance(x, str) for x in argv):
+                reasons.append("tests_argv_invalid")
+                denied.append(a)
+                continue
+            if not is_allowed_tests_argv(argv):
+                reasons.append("tests_argv_not_allowlisted")
+                denied.append(a)
+                continue
 
         approved.append(a)
 
@@ -141,3 +241,4 @@ def gate(
         )
 
     return Decision(status="ALLOW", reasons=(), approved_actions=tuple(approved), denied_actions=())
+

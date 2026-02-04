@@ -152,7 +152,7 @@ class TestKernelActionsStillWork:
         proposal = Proposal(
             proposal_id="p1",
             actions=(
-                Action(name="RUN_TESTS", args={"argv": ["pytest", "-q"]}),
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),
             ),
         )
 

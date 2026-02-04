@@ -93,7 +93,7 @@ class TestPathTraversal:
             actions=(
                 Action(name="READ_FILE", args={"path": "/tmp/malware.py"}),
                 Action(name="WRITE_FILE", args={"path": "/tmp/malware.py", "content": "import os; os.system('rm -rf /')"}),
-                Action(name="RUN_TESTS", args={"argv": ["pytest"]}),
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),
             ),
         )
 
@@ -264,7 +264,7 @@ class TestMalformedInputs:
             actions=(
                 Action(name="READ_FILE", args={"path": f"{ws}/target.py"}),
                 Action(name="WRITE_FILE", args={"path": f"{ws}/target.py", "content": huge_content}),
-                Action(name="RUN_TESTS", args={"argv": ["pytest"]}),
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),
             ),
         )
 
@@ -289,7 +289,7 @@ class TestOrderRuleBypasses:
             proposal_id="p",
             actions=(
                 Action(name="WRITE_FILE", args={"path": f"{ws}/file.py", "content": "evil"}),
-                Action(name="RUN_TESTS", args={"argv": ["pytest"]}),
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),
             ),
         )
 
@@ -323,7 +323,7 @@ class TestOrderRuleBypasses:
             proposal_id="p",
             actions=(
                 Action(name="READ_FILE", args={"path": f"{ws}/file.py"}),
-                Action(name="RUN_TESTS", args={"argv": ["pytest"]}),  # Tests before write
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),  # Tests before write
                 Action(name="WRITE_FILE", args={"path": f"{ws}/file.py", "content": "x"}),
             ),
         )
@@ -382,7 +382,7 @@ class TestResourceExhaustion:
         proposal = Proposal(
             proposal_id="p",
             actions=(
-                Action(name="RUN_TESTS", args={"argv": ["pytest"]}),
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),
             ),
         )
 
@@ -405,7 +405,7 @@ class TestNetworkShellAccess:
         proposal = Proposal(
             proposal_id="p",
             actions=(
-                Action(name="RUN_TESTS", args={"argv": ["pytest"], "network": True}),
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"], "network": True}),
             ),
         )
 
@@ -479,7 +479,7 @@ class TestValidProposals:
             actions=(
                 Action(name="READ_FILE", args={"path": f"{ws}/fix.py"}),
                 Action(name="WRITE_FILE", args={"path": f"{ws}/fix.py", "content": "# fixed\n"}),
-                Action(name="RUN_TESTS", args={"argv": ["pytest", "-q"]}),
+                Action(name="RUN_TESTS", args={"argv": ["python", "-m", "pytest", "-q"]}),
             ),
         )
 
