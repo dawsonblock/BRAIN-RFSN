@@ -234,3 +234,196 @@ def run_two_phase_episode(
         reward=reward,
         phase_count=2,
     )
+
+
+# =============================================================================
+# TRAJECTORY EPISODE (N-STEP REPAIR LOOP)
+# =============================================================================
+
+def _pytest_argv_full() -> list[str]:
+    """Default pytest argv for full test suite."""
+    return ["python", "-m", "pytest", "-q"]
+
+
+def _pytest_argv_targeted(nodeids: list[str]) -> list[str]:
+    """
+    Build targeted pytest argv using -k expression.
+    Stays within gate allowlist (which supports -k).
+    """
+    if not nodeids:
+        return _pytest_argv_full()
+    
+    # Extract just the test function names (after last '::')
+    names = []
+    for n in nodeids[:25]:  # Cap to avoid pathologically long -k
+        part = n.split("::")[-1]
+        # Remove any parameterized parts like [param]
+        if "[" in part:
+            part = part.split("[")[0]
+        part = part.replace('"', "").replace("'", "")
+        if part:
+            names.append(part)
+    
+    if not names:
+        return _pytest_argv_full()
+    
+    expr = " or ".join(names)
+    return ["python", "-m", "pytest", "-q", "-k", expr]
+
+
+def run_trajectory_episode(
+    *,
+    ledger_path: str,
+    task_id: str,
+    workspace_root: str,
+    proposer_fn,  # Callable[[StateSnapshot, dict], Proposal]
+    max_steps: int = 6,
+    panic_on_deny: bool = False,
+    budget_actions: int = 100,
+    budget_wall_ms: int = 300_000,
+) -> EpisodeOutcome:
+    """
+    Run up to max_steps proposals in sequence (trajectory repair loop).
+    
+    Each step:
+        1. Read failed tests from last run
+        2. proposer_fn(state, observation) -> Proposal
+        3. gate(state, proposal) -> Decision
+        4. controller.execute(approved_actions) -> results
+        5. ledger.append(...)
+        6. If tests pass, stop. Otherwise continue.
+    
+    Observation includes:
+        - failed_nodeids: List of failed test node IDs
+        - prefer_targeted_tests: Whether to prioritize failed tests
+        - suggested_test_argv: Allowlisted argv for targeted testing
+    
+    Returns:
+        EpisodeOutcome with trajectory results.
+    """
+    from .failing_tests import read_failed_nodeids
+    
+    t0 = time.perf_counter()
+    ws = os.path.abspath(workspace_root)
+    
+    # Initialize state
+    state = StateSnapshot(
+        task_id=task_id,
+        workspace_root=ws,
+        step=0,
+        budget_actions_remaining=budget_actions,
+        budget_wall_ms_remaining=budget_wall_ms,
+        mode="NORMAL",
+        notes={},
+    )
+    
+    ok_final = False
+    denied_count = 0
+    total_phases = 0
+    
+    for step in range(max_steps):
+        total_phases = step + 1
+        
+        # Get failed tests from last run
+        failed = read_failed_nodeids(ws)
+        
+        # Build observation for proposer
+        observation = {
+            "failed_nodeids": failed,
+            "prefer_targeted_tests": bool(failed),
+            "suggested_test_argv": _pytest_argv_targeted(failed) if failed else _pytest_argv_full(),
+            "step": step,
+        }
+        
+        # Get proposal from upstream
+        proposal = proposer_fn(state, observation)
+        
+        # Gate validation
+        decision = gate(state, proposal)
+        
+        if decision.status != "ALLOW":
+            denied_count += 1
+            
+            # Ledger the denial
+            append_ledger(
+                ledger_path=ledger_path,
+                state=state,
+                proposal=proposal,
+                decision=decision,
+                results=(),
+                meta={"step": step, "denied": True},
+            )
+            
+            if panic_on_deny:
+                # Enter PANIC mode and stop
+                state = StateSnapshot(
+                    task_id=state.task_id,
+                    workspace_root=state.workspace_root,
+                    step=state.step + 1,
+                    budget_actions_remaining=state.budget_actions_remaining,
+                    budget_wall_ms_remaining=state.budget_wall_ms_remaining,
+                    mode="PANIC",
+                    notes=dict(state.notes),
+                )
+                break
+            
+            # Continue to next step (learner can try another variant)
+            break
+        
+        # Execute approved actions
+        results = execute_decision(state, decision)
+        
+        # Check if tests passed
+        step_tests_passed = False
+        for r in results:
+            if r.action.name == "RUN_TESTS":
+                step_tests_passed = bool(r.ok)
+        
+        # Ledger the step
+        step_wall_ms = int((time.perf_counter() - t0) * 1000)
+        append_ledger(
+            ledger_path=ledger_path,
+            state=state,
+            proposal=proposal,
+            decision=decision,
+            results=results,
+            meta={"step": step, "tests_passed": step_tests_passed, "wall_ms": step_wall_ms},
+        )
+        
+        # Success check
+        if step_tests_passed:
+            # Double check no more failures
+            remaining_failures = read_failed_nodeids(ws)
+            if not remaining_failures:
+                ok_final = True
+                break
+        
+        # Advance state for next step
+        used_actions = len(proposal.actions)
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        
+        state = StateSnapshot(
+            task_id=state.task_id,
+            workspace_root=state.workspace_root,
+            step=state.step + 1,
+            budget_actions_remaining=max(0, state.budget_actions_remaining - used_actions),
+            budget_wall_ms_remaining=max(0, state.budget_wall_ms_remaining - elapsed_ms),
+            mode=state.mode,
+            notes=dict(state.notes),
+        )
+        
+        # Budget check
+        if state.budget_actions_remaining <= 0:
+            break
+    
+    total_wall_ms = int((time.perf_counter() - t0) * 1000)
+    status = "ALLOW" if denied_count == 0 else "DENY"
+    reward = reward_from_episode(status, ok_final, total_wall_ms)
+    
+    return EpisodeOutcome(
+        decision_status=status,
+        tests_passed=ok_final,
+        wall_ms=total_wall_ms,
+        reward=reward,
+        phase_count=total_phases,
+    )

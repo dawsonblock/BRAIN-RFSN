@@ -14,11 +14,13 @@ from __future__ import annotations
 
 from typing import Tuple
 import os
+import hashlib
 
 from .types import StateSnapshot, Decision, Action, ExecResult
 from .envelopes import default_envelopes
 from .sandbox.sandbox_adapter import run_cmd
 from .gate import is_allowed_tests_argv
+from .patch_apply import parse_unified_diff, apply_unified_diff_to_text, normalize_diff_path
 
 
 # ----------------------------
@@ -128,26 +130,78 @@ def _execute_action(state: StateSnapshot, action: Action, timeout_ms: int, max_b
 
     # === APPLY_PATCH ===
     if action.name == "APPLY_PATCH":
-        raw_path = action.args.get("path", "")
-        abspath = _resolve_under_workspace(ws, raw_path)
-        
-        # SECURITY: realpath containment check
-        parent = os.path.dirname(abspath)
-        if os.path.exists(abspath):
-            check_path = abspath
-        else:
-            check_path = parent if os.path.exists(parent) else ws
-        if not _realpath_is_under(ws, check_path):
-            return ExecResult(action=action, ok=False, stderr="path_escape", exit_code=1)
-        
-        content = str(action.args.get("content", ""))
-        try:
-            os.makedirs(parent, exist_ok=True)
-            with open(abspath, "w", encoding="utf-8") as f:
-                f.write(content)
-            return ExecResult(action=action, ok=True, stdout="APPLIED_PATCH_AS_REPLACE")
-        except Exception as e:
-            return ExecResult(action=action, ok=False, stderr=str(e), exit_code=1)
+        diff = action.args.get("diff")
+        if not isinstance(diff, str) or not diff.strip():
+            return ExecResult(action=action, ok=False, stderr="missing_diff", exit_code=2)
+
+        files, _changed = parse_unified_diff(diff)
+        if not files:
+            return ExecResult(action=action, ok=False, stderr="no_files_in_diff", exit_code=2)
+
+        # Optional: base_sha256_map for conflict detection
+        base_map = action.args.get("base_sha256_map")
+        if base_map is not None and not isinstance(base_map, dict):
+            return ExecResult(action=action, ok=False, stderr="invalid_base_sha256_map", exit_code=2)
+
+        patched_files = []
+        for old_path, new_path, file_diff_text in files:
+            # Normalize diff paths (strip a/ b/ prefixes, handle /dev/null)
+            np = normalize_diff_path(new_path)
+            if np in ("/dev/null", "dev/null"):
+                # Deletion - not supported for safety
+                return ExecResult(action=action, ok=False, stderr="deletes_not_supported", exit_code=2)
+
+            abspath = _resolve_under_workspace(ws, np)
+            
+            # SECURITY: realpath containment check
+            parent = os.path.dirname(abspath)
+            if os.path.exists(abspath):
+                check_path = abspath
+            else:
+                check_path = parent if os.path.exists(parent) else ws
+            if not _realpath_is_under(ws, check_path):
+                return ExecResult(action=action, ok=False, stderr=f"path_escape:{np}", exit_code=1)
+
+            # Read original content (or empty for new files)
+            old_text = ""
+            if os.path.exists(abspath):
+                try:
+                    with open(abspath, "r", encoding="utf-8") as f:
+                        old_text = f.read()
+                except Exception as e:
+                    return ExecResult(action=action, ok=False, stderr=f"read_error:{np}:{e}", exit_code=1)
+
+            # Base hash pinning check (if provided)
+            if base_map is not None:
+                expected = base_map.get(np)
+                if expected is None:
+                    return ExecResult(action=action, ok=False, stderr=f"missing_base_sha256:{np}", exit_code=2)
+                got = hashlib.sha256(old_text.encode("utf-8")).hexdigest()
+                if got != expected:
+                    return ExecResult(action=action, ok=False, stderr=f"base_sha256_mismatch:{np}", exit_code=2)
+
+            # Apply the diff
+            try:
+                new_text = apply_unified_diff_to_text(old_text, file_diff_text)
+            except ValueError as e:
+                return ExecResult(action=action, ok=False, stderr=f"patch_apply_failed:{np}:{e}", exit_code=2)
+            except Exception as e:
+                return ExecResult(action=action, ok=False, stderr=f"patch_error:{np}:{type(e).__name__}", exit_code=2)
+
+            # Write the patched file
+            try:
+                os.makedirs(parent, exist_ok=True)
+                with open(abspath, "w", encoding="utf-8") as f:
+                    f.write(new_text)
+                patched_files.append(np)
+            except Exception as e:
+                return ExecResult(action=action, ok=False, stderr=f"write_error:{np}:{e}", exit_code=1)
+
+        return ExecResult(
+            action=action, 
+            ok=True, 
+            stdout=f"patched_files={len(patched_files)}: {', '.join(patched_files)}"
+        )
 
     # === RUN_TESTS ===
     if action.name == "RUN_TESTS":

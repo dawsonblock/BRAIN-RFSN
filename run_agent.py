@@ -1,132 +1,99 @@
+#!/usr/bin/env python3
+"""
+RFSN Runner Wrapper - kernel + companion + learner only.
+No cognitive/consciousness/memory layers.
+"""
+from __future__ import annotations
+
 import argparse
-import logging
-import os
-import shutil
 import sys
 
-from best_build_agent import get_best_build_agent
-from memory.vector_store import DEFAULT_MEMORY_DIR
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def cmd_run(args: argparse.Namespace) -> int:
+    """Run learning episodes (SWE-bench style loop)."""
+    from rfsn_run import main as rfsn_run_main
 
-
-def _run_kernel_or_learner(args) -> None:
-    if not args.workspace:
-        print("Error: --workspace is required for --mode kernel/learner")
-        raise SystemExit(2)
-
-    import rfsn_run
-
-    sys.argv = [
-        sys.argv[0],
+    argv = [
+        "rfsn_run.py",
         "--workspace", args.workspace,
         "--task-id", args.task_id,
         "--episodes", str(args.episodes),
-        "--ledger", args.ledger,
-        "--outcomes-db", args.outcomes_db,
-        "--bucket", args.bucket,
+        "--seed", str(args.seed),
     ]
-    raise SystemExit(rfsn_run.main())
+    if args.variant is not None:
+        argv += ["--variant", args.variant]
+    if args.db_path is not None:
+        argv += ["--db-path", args.db_path]
+    if args.max_steps is not None:
+        argv += ["--max-steps", str(args.max_steps)]
+    if args.panic_on_deny:
+        argv += ["--panic-on-deny"]
+    if args.replay_verify:
+        argv += ["--replay-verify"]
+    if args.verbose:
+        argv += ["--verbose"]
+    return rfsn_run_main(argv)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="RFSN Agent CLI")
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Replay a ledger and verify chain + gate determinism."""
+    from rfsn_replay import main as rfsn_replay_main
+    argv = ["rfsn_replay.py", "--ledger", args.ledger]
+    if args.verbose:
+        argv += ["--verbose"]
+    return rfsn_replay_main(argv)
 
-    parser.add_argument(
-        "--mode",
-        default="dialogue",
-        choices=["dialogue", "kernel", "learner", "research"],
-        help="dialogue | kernel | learner | research",
+
+def cmd_cli(args: argparse.Namespace) -> int:
+    """Interactive CLI for the kernel workspace."""
+    from rfsn_cli import main as rfsn_cli_main
+    argv = ["rfsn_cli.py", "--workspace", args.workspace]
+    if args.verbose:
+        argv += ["--verbose"]
+    return rfsn_cli_main(argv)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="run_agent.py",
+        description="RFSN runner wrapper (kernel + companion + learner only)."
     )
+    sub = p.add_subparsers(dest="cmd", required=True)
 
-    # Dialogue/Research agent args
-    parser.add_argument("--restore-memory", help="Path to memory dump to restore from.")
-    parser.add_argument("--task", help="Execute a single task and exit.")
-    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode.")
+    # run subcommand
+    pr = sub.add_parser("run", help="Run learning episodes (SWE-bench style loop).")
+    pr.add_argument("--workspace", required=True, help="Workspace root for the target repo.")
+    pr.add_argument("--task-id", required=True, help="Task identifier (e.g. SWE-bench instance id).")
+    pr.add_argument("--episodes", type=int, default=5)
+    pr.add_argument("--seed", type=int, default=1337)
+    pr.add_argument("--variant", default=None, help="Force proposer variant id (optional).")
+    pr.add_argument("--db-path", default=None, help="SQLite outcomes DB path.")
+    pr.add_argument("--max-steps", type=int, default=None, help="Max steps per episode (trajectory length).")
+    pr.add_argument("--panic-on-deny", action="store_true", help="Enter PANIC mode after first gate deny.")
+    pr.add_argument("--replay-verify", action="store_true", help="Verify determinism via replay after each episode.")
+    pr.add_argument("--verbose", action="store_true")
+    pr.set_defaults(fn=cmd_run)
 
-    # Kernel/Learner args
-    parser.add_argument("--workspace", default="", help="Workspace root for kernel/learner mode")
-    parser.add_argument("--task-id", default="local_task", help="Kernel task id")
-    parser.add_argument("--episodes", type=int, default=3, help="Number of kernel episodes")
-    parser.add_argument("--ledger", default="./run_logs/ledger.jsonl", help="Ledger path")
-    parser.add_argument("--outcomes-db", default="./run_logs/outcomes.sqlite3", help="Outcomes DB path")
-    parser.add_argument("--bucket", default="local", help="Outcome bucket label")
+    # replay subcommand
+    pp = sub.add_parser("replay", help="Replay a ledger and verify chain + gate determinism.")
+    pp.add_argument("--ledger", required=True, help="Path to ledger JSONL.")
+    pp.add_argument("--verbose", action="store_true")
+    pp.set_defaults(fn=cmd_replay)
 
-    args = parser.parse_args()
+    # cli subcommand
+    pc = sub.add_parser("cli", help="Interactive CLI for the kernel workspace.")
+    pc.add_argument("--workspace", required=True)
+    pc.add_argument("--verbose", action="store_true")
+    pc.set_defaults(fn=cmd_cli)
 
-    # Single authority path for kernel/learner.
-    if args.mode in ("kernel", "learner"):
-        _run_kernel_or_learner(args)
+    return p
 
-    # --- Dialogue/Research mode
-    if args.restore_memory:
-        print(f"RESTORING MEMORY FROM: {args.restore_memory}")
-        if not os.path.exists(args.restore_memory):
-            print(f"Error: Restore path {args.restore_memory} does not exist.")
-            sys.exit(1)
 
-        target_dir = DEFAULT_MEMORY_DIR
-        if os.path.exists(target_dir):
-            shutil.rmtree(target_dir)
-        os.makedirs(target_dir, exist_ok=True)
-
-        source_vec = os.path.join(args.restore_memory, "vector_memory")
-        if os.path.exists(source_vec):
-            shutil.copytree(source_vec, target_dir)
-            print(f"Vector Memory restored to {target_dir}")
-        else:
-            shutil.copytree(args.restore_memory, target_dir)
-            print(f"Memory restored (direct) to {target_dir}")
-
-        source_beliefs = os.path.join(args.restore_memory, "core_beliefs.json")
-        target_beliefs = os.path.join(os.path.dirname(target_dir), "core_beliefs.json")
-        if os.path.exists(source_beliefs):
-            shutil.copy2(source_beliefs, target_beliefs)
-            print(f"Core Beliefs restored to {target_beliefs}")
-
-    # Initialize agent after restoring memory
-    try:
-        agent = get_best_build_agent()
-    except Exception as e:
-        print(f"Failed to initialize agent: {e}")
-        sys.exit(1)
-
-    if args.task:
-        print(f"Processing Task: {args.task}")
-        res = agent.process_task(args.task)
-        import json
-        print(json.dumps(res, indent=2, default=str))
-        return
-
-    # Default to interactive if not given a one-shot task
-    if args.interactive or not args.task:
-        print("RFSN Interactive Mode. Type 'exit' to quit.")
-        print("-" * 50)
-        while True:
-            try:
-                task = input("\nUSER> ")
-                if not task:
-                    continue
-                if task.lower() in ["exit", "quit"]:
-                    print("Shutting down.")
-                    break
-
-                res = agent.process_task(task)
-
-                print(f"\nRFSN ({res.get('neuro_state', 'UNKNOWN')})> {res.get('result')}")
-                if res.get("proactive_thought"):
-                    print(f"Thought: {res['proactive_thought']}")
-
-            except KeyboardInterrupt:
-                print("\nInterrupted.")
-                break
-            except Exception as e:
-                print(f"Error: {e}")
+def main(argv: list[str] | None = None) -> int:
+    argv = argv if argv is not None else sys.argv[1:]
+    args = build_parser().parse_args(argv)
+    return int(args.fn(args))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

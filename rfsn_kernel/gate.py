@@ -7,6 +7,7 @@ import os
 from .types import StateSnapshot, Proposal, Action, Decision
 from .envelopes import default_envelopes, validate_action_against_envelope
 from .policy import DEFAULT_POLICY, KernelPolicy
+from .patch_apply import parse_unified_diff
 
 
 def _norm_path(p: str) -> str:
@@ -227,6 +228,25 @@ def gate(
                 continue
             if not is_allowed_tests_argv(argv):
                 reasons.append("tests_argv_not_allowlisted")
+                denied.append(a)
+                continue
+
+        # CRITICAL: APPLY_PATCH enforcement (file count + line change caps)
+        if a.name == "APPLY_PATCH":
+            diff = a.args.get("diff")
+            if not isinstance(diff, str) or not diff.strip():
+                reasons.append("patch:missing_diff")
+                denied.append(a)
+                continue
+
+            files, changed = parse_unified_diff(diff)
+            # Policy-level caps (gate enforcement)
+            if len(files) > policy.max_patch_files:
+                reasons.append(f"patch:max_patch_files_exceeded:{len(files)}")
+                denied.append(a)
+                continue
+            if changed > policy.max_lines_changed:
+                reasons.append(f"patch:max_lines_changed_exceeded:{changed}")
                 denied.append(a)
                 continue
 
