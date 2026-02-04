@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 from rfsn_kernel.types import StateSnapshot, Proposal
-from .proposers.deterministic_stub import propose_deterministic
+from .strategies import build_strategy_registry
+
+
+_REGISTRY = build_strategy_registry()
 
 
 def propose(state: StateSnapshot) -> Proposal:
     """
-    Companion layer chooses *how* to propose.
-    This minimal build is deterministic, so kernel/replay tests are stable.
-    Swap propose_deterministic() with an LLM-backed proposer later.
+    Select a proposal strategy based on state.notes["arm_id"].
+    Falls back deterministically to run_tests_only.
     """
-    return propose_deterministic(state)
+    arm_id = state.notes.get("arm_id")
+    if not isinstance(arm_id, str) or arm_id not in _REGISTRY:
+        arm_id = "run_tests_only"
+    return _REGISTRY[arm_id].propose(state)
