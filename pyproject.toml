@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brain-rfsn"
+version = "0.3.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "rfsn_kernel*",
+  "rfsn_companion*",
+  "upstream_learner*",
+  "cognitive*",
+  "consciousness*",
+  "learning*",
+  "memory*",
+  "operations*",
+  "plans*",
+  "security*",
+  "rfsn_controller*"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

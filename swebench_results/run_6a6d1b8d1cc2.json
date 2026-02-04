@@ -1,0 +1,44 @@
+{
+  "run_id": "6a6d1b8d1cc2",
+  "timestamp": "2026-02-04T02:20:39.500384",
+  "tasks_total": 5,
+  "tasks_resolved": 5,
+  "resolve_rate": 1.0,
+  "results": [
+    {
+      "task_id": "math_add_bug",
+      "repo": "local/buggy_math",
+      "tests_passed": true,
+      "time_seconds": 7.744600057601929,
+      "error": null
+    },
+    {
+      "task_id": "string_reverse_bug",
+      "repo": "local/buggy_string",
+      "tests_passed": true,
+      "time_seconds": 6.972111701965332,
+      "error": null
+    },
+    {
+      "task_id": "factorial_bug",
+      "repo": "local/buggy_factorial",
+      "tests_passed": true,
+      "time_seconds": 7.072554111480713,
+      "error": null
+    },
+    {
+      "task_id": "max_list_bug",
+      "repo": "local/buggy_max",
+      "tests_passed": true,
+      "time_seconds": 20.166996002197266,
+      "error": null
+    },
+    {
+      "task_id": "is_even_bug",
+      "repo": "local/buggy_even",
+      "tests_passed": true,
+      "time_seconds": 10.752680778503418,
+      "error": null
+    }
+  ]
+}

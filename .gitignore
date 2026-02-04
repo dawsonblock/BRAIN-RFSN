@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Virtualenv
+.venv/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Logs / artifacts
+run_logs/
+.rfsn/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / misc
+Thumbs.db
+*.db
+rfsn_memory_store/
