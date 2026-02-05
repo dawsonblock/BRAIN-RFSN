@@ -15,7 +15,7 @@ def test_security_path_confinement():
     
     # Valid run IDs
     assert validate_run_id("run_20240101_120000_abc12345")
-    assert validate_run_id("run_20240215_235959_xyz98765")
+    assert validate_run_id("run_20240215_235959_abc98765")
     
     # Invalid run IDs
     assert not validate_run_id("../../../etc/passwd")
