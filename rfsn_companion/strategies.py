@@ -128,6 +128,26 @@ class WriteNoteThenTests(PlannerStrategy):
         return Proposal(actions=actions, meta={"strategy": self.arm_id})
 
 
+class CandidatePatchLoop(PlannerStrategy):
+    """
+    Deterministic candidate-patch search loop.
+
+    Reads patch candidates from state.notes["patch_candidates"] and applies
+    the one at index state.notes["candidate_index"] (default 0).
+
+    This enables reproducible patch generation by iterating through candidates
+    in a seeded, deterministic order.
+    """
+    def propose(self, state: StateSnapshot) -> Proposal:
+        from rfsn_companion.proposers.candidate_loop import candidate_loop_propose
+        proposal = candidate_loop_propose(state)
+        # Override meta to include strategy arm_id
+        return Proposal(
+            actions=proposal.actions,
+            meta={**proposal.meta, "strategy": self.arm_id},
+        )
+
+
 def build_strategy_registry() -> Dict[str, PlannerStrategy]:
     """
     Add / remove arms here. Upstream bandit chooses among these ids.
@@ -139,5 +159,7 @@ def build_strategy_registry() -> Dict[str, PlannerStrategy]:
         PatchIfProvidedThenTests(arm_id="patch_if_provided_then_tests", label="Apply provided patch then run tests"),
         ReadPatchTest(arm_id="read_patch_test", label="Read focus, apply patch, then run tests"),
         WriteNoteThenTests(arm_id="write_note_then_tests", label="Write marker then run tests"),
+        CandidatePatchLoop(arm_id="candidate_patch_loop", label="Deterministic candidate-patch search loop"),
     ]
     return {s.arm_id: s for s in strategies}
+
