@@ -24,6 +24,26 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 
+def _normalize_chat_completions_url(base_or_full: str) -> str:
+    """
+    Normalize LLM base URL to full chat completions endpoint.
+
+    Accepts:
+      - https://api.openai.com
+      - https://api.openai.com/v1
+      - https://api.openai.com/v1/chat/completions
+    Returns full endpoint URL.
+    """
+    u = (base_or_full or "").strip().rstrip("/")
+    if not u:
+        return u
+    if u.endswith("/v1/chat/completions"):
+        return u
+    if u.endswith("/v1"):
+        return u + "/chat/completions"
+    return u + "/v1/chat/completions"
+
+
 _UNIFIED_DIFF_START_RE = re.compile(r"(?m)^(diff --git .+)$")
 _UNIFIED_DIFF_HEADER_RE = re.compile(r"(?m)^(---\s+\S+)$")
 
@@ -81,7 +101,7 @@ class LLMClient:
         Expects env:
           LLM_BASE_URL, LLM_API_KEY, LLM_MODEL
         """
-        url = (self.base_url or "").rstrip("/")
+        url = _normalize_chat_completions_url(self.base_url or "")
         if not url:
             raise RuntimeError("LLM_BASE_URL missing")
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import time
 import hashlib
 from dataclasses import dataclass
@@ -199,6 +200,57 @@ def _make_candidate_prompts(base_prompt: str, *, k: int) -> List[str]:
     return out
 
 
+# --------- git rollback utilities ---------
+
+
+def _is_git_repo(workspace: str) -> bool:
+    """Check if workspace has a .git directory."""
+    return os.path.isdir(os.path.join(workspace, ".git"))
+
+
+def _git_head(workspace: str) -> Optional[str]:
+    """Get current HEAD SHA for rollback baseline."""
+    try:
+        p = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=workspace,
+            capture_output=True,
+            timeout=10,
+            check=True,
+        )
+        return p.stdout.decode("utf-8", errors="replace").strip()
+    except Exception:
+        return None
+
+
+def _git_hard_reset(workspace: str, ref: str) -> bool:
+    """
+    Roll back workspace to a known baseline between candidate evaluations.
+
+    This happens *outside* the kernel action surface (no new kernel action).
+    The rollback event is logged to the ledger as an audit note via run_step
+    with an empty proposal.
+    """
+    try:
+        subprocess.run(
+            ["git", "reset", "--hard", ref],
+            cwd=workspace,
+            capture_output=True,
+            timeout=30,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "clean", "-fd"],
+            cwd=workspace,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        return True
+    except Exception:
+        return False
+
+
 # --------- gated step runner ---------
 
 @dataclass(frozen=True)
@@ -327,6 +379,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         arm_id = executor.select_arm(method="thompson")
         plan = executor.get_execution_plan(arm_id)
 
+        # Capture baseline git ref for rollback between candidates
+        git_baseline: Optional[str] = None
+        if _is_git_repo(args.workspace):
+            git_baseline = _git_head(args.workspace)
+
         pack = build_context_pack(
             ledger_path=args.ledger,
             workspace=args.workspace,
@@ -453,6 +510,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         best_reward = -1.0
 
         for cand_i, (diff, qscore) in enumerate(ranked, start=1):
+            # Rollback to baseline before applying this candidate
+            if git_baseline and cand_i > 1:
+                _git_hard_reset(args.workspace, git_baseline)
+                # Log rollback event to ledger
+                append_ledger(args.ledger, {
+                    "event": "candidate_rollback",
+                    "baseline": git_baseline,
+                    "attempt": attempt,
+                    "candidate": cand_i,
+                    "arm_id": arm_id,
+                })
+
             # Apply candidate
             patch_state = StateSnapshot(
                 workspace=args.workspace,

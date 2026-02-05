@@ -16,6 +16,8 @@ def test_apply_patch_then_run_tests_host(tmp_path):
     # init git so APPLY_PATCH works
     import subprocess
     subprocess.run(["git", "init"], cwd=str(ws), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(ws), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(ws), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     subprocess.run(["git", "add", "."], cwd=str(ws), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(ws), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 

@@ -38,8 +38,14 @@ _MAX_GIT_DIFF_BYTES = 512_000
 _DEFAULT_TEST_MODE = (os.environ.get("RFSN_TEST_MODE") or "host").strip().lower()
 
 
-def _get_test_mode(payload: Dict[str, Any]) -> str:
-    """Get test execution mode from action payload or default."""
+def _get_test_mode(payload: dict[str, Any]) -> str:
+    """
+    Get test execution mode from action payload or default.
+
+    Precedence rule:
+    1. Explicit per-action payload["mode"] (highest priority)
+    2. Env RFSN_TEST_MODE (fallback)
+    """
     m = payload.get("mode")
     if isinstance(m, str) and m.strip():
         return m.strip().lower()
