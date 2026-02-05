@@ -21,6 +21,10 @@ from .patch_safety import patch_paths_are_confined
 _MAX_READ_BYTES = 512_000
 _MAX_WRITE_BYTES = 512_000
 _MAX_TEST_OUTPUT_CHARS = 120_000
+_MAX_GREP_RESULTS = 100
+_MAX_GREP_OUTPUT_BYTES = 512_000
+_MAX_LIST_DIR_ENTRIES = 500
+_MAX_GIT_DIFF_BYTES = 512_000
 
 
 def _realpath_in_workspace(workspace: str, user_path: str) -> bool:
@@ -145,6 +149,123 @@ def _run_tests(workspace: str, argv: List[str], timeout_s: int = 600) -> Dict[st
     }
 
 
+def _grep(workspace: str, pattern: str, path: str = ".") -> Dict[str, Any]:
+    """
+    Safe grep with caps.
+    Uses grep -rn for recursive line-numbered search.
+    """
+    ws = os.path.realpath(workspace)
+    target = os.path.join(ws, path) if path != "." else ws
+    
+    try:
+        proc = subprocess.run(
+            ["grep", "-rn", "-E", "--include=*.py", "--include=*.txt", "--include=*.md", 
+             "--include=*.json", "--include=*.yaml", "--include=*.yml", "--include=*.toml",
+             pattern, target],
+            cwd=ws,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "grep timeout", "matches": []}
+    
+    raw = proc.stdout.decode("utf-8", errors="replace")
+    # Cap output
+    if len(raw) > _MAX_GREP_OUTPUT_BYTES:
+        raw = raw[:_MAX_GREP_OUTPUT_BYTES] + "\n[truncated]"
+    
+    # Parse lines and cap results
+    lines = raw.strip().split("\n") if raw.strip() else []
+    lines = lines[:_MAX_GREP_RESULTS]
+    
+    return {
+        "ok": True,
+        "pattern": pattern,
+        "path": path,
+        "matches": lines,
+        "count": len(lines),
+        "truncated": len(lines) >= _MAX_GREP_RESULTS,
+    }
+
+
+def _list_dir(workspace: str, path: str = ".") -> Dict[str, Any]:
+    """
+    Safe directory listing with caps.
+    No recursive, max entries capped.
+    """
+    ws = os.path.realpath(workspace)
+    target = os.path.join(ws, path) if path != "." else ws
+    
+    if not os.path.isdir(target):
+        return {"ok": False, "error": f"not a directory: {path}", "entries": []}
+    
+    try:
+        entries = os.listdir(target)
+    except OSError as e:
+        return {"ok": False, "error": str(e), "entries": []}
+    
+    # Cap entries
+    entries = sorted(entries)[:_MAX_LIST_DIR_ENTRIES]
+    
+    # Add type info
+    result = []
+    for name in entries:
+        full = os.path.join(target, name)
+        entry = {"name": name}
+        try:
+            if os.path.isdir(full):
+                entry["type"] = "dir"
+            elif os.path.isfile(full):
+                entry["type"] = "file"
+                entry["size"] = os.path.getsize(full)
+            else:
+                entry["type"] = "other"
+        except OSError:
+            entry["type"] = "unknown"
+        result.append(entry)
+    
+    return {
+        "ok": True,
+        "path": path,
+        "entries": result,
+        "count": len(result),
+        "truncated": len(entries) >= _MAX_LIST_DIR_ENTRIES,
+    }
+
+
+def _git_diff(workspace: str) -> Dict[str, Any]:
+    """
+    Safe git diff with output cap.
+    Returns current uncommitted changes.
+    """
+    ws = os.path.realpath(workspace)
+    
+    if not os.path.isdir(os.path.join(ws, ".git")):
+        return {"ok": False, "error": "not a git repo", "diff": ""}
+    
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--stat"],
+            cwd=ws,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "git diff timeout", "diff": ""}
+    
+    diff = proc.stdout.decode("utf-8", errors="replace")
+    if len(diff) > _MAX_GIT_DIFF_BYTES:
+        diff = diff[:_MAX_GIT_DIFF_BYTES] + "\n[truncated]"
+    
+    return {
+        "ok": True,
+        "diff": diff,
+        "returncode": proc.returncode,
+    }
+
+
 def execute_decision(state: StateSnapshot, decision: Decision) -> Tuple[ExecResult, ...]:
     if not decision.allowed:
         raise RuntimeError(f"decision denied: {decision.reason}")
@@ -180,6 +301,32 @@ def execute_decision(state: StateSnapshot, decision: Decision) -> Tuple[ExecResu
 
         elif a.type == "RUN_TESTS":
             out = _run_tests(ws, a.payload["argv"])
+            results.append(ExecResult(bool(out.get("ok")), a, out))
+
+        elif a.type == "GREP":
+            pattern = a.payload["pattern"]
+            path = a.payload.get("path", ".")
+            # Defense in depth: validate path again
+            if path != ".":
+                if not _is_confined_relative(path):
+                    raise RuntimeError(f"GREP path not confined: {path}")
+                if not _realpath_in_workspace(ws, path):
+                    raise RuntimeError(f"GREP path escapes via symlink: {path}")
+            out = _grep(ws, pattern, path)
+            results.append(ExecResult(bool(out.get("ok")), a, out))
+
+        elif a.type == "LIST_DIR":
+            path = a.payload.get("path", ".")
+            if path != ".":
+                if not _is_confined_relative(path):
+                    raise RuntimeError(f"LIST_DIR path not confined: {path}")
+                if not _realpath_in_workspace(ws, path):
+                    raise RuntimeError(f"LIST_DIR path escapes via symlink: {path}")
+            out = _list_dir(ws, path)
+            results.append(ExecResult(bool(out.get("ok")), a, out))
+
+        elif a.type == "GIT_DIFF":
+            out = _git_diff(ws)
             results.append(ExecResult(bool(out.get("ok")), a, out))
 
         else:

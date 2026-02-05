@@ -7,7 +7,7 @@ import json
 import hashlib
 
 
-ActionType = Literal["READ_FILE", "WRITE_FILE", "APPLY_PATCH", "RUN_TESTS"]
+ActionType = Literal["READ_FILE", "WRITE_FILE", "APPLY_PATCH", "RUN_TESTS", "GREP", "LIST_DIR", "GIT_DIFF"]
 
 
 @dataclass(frozen=True)

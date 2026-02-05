@@ -29,6 +29,9 @@ _PYTEST_NODEID_SAFE = re.compile(r"^[A-Za-z0-9_./:-]+(::[A-Za-z0-9_./:-]+)*$")
 # Hard caps to prevent resource abuse
 _MAX_WRITE_BYTES = 512_000          # 512 KB per WRITE_FILE
 _MAX_TOTAL_WRITE_BYTES = 2_000_000  # 2 MB per proposal
+_MAX_GREP_RESULTS = 100             # max lines returned by GREP
+_MAX_LIST_DIR_ENTRIES = 500         # max entries returned by LIST_DIR
+_MAX_GIT_DIFF_BYTES = 512_000       # 512 KB for GIT_DIFF output
 
 
 def _realpath_in_workspace(workspace: str, user_path: str) -> bool:
@@ -166,6 +169,36 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
                 return Decision(False, "RUN_TESTS argv must be list[str]", ())
             if not is_allowed_tests_argv(argv, workspace=ws):
                 return Decision(False, f"RUN_TESTS argv not allowlisted: {argv}", ())
+            approved.append(a)
+
+        elif a.type == "GREP":
+            pattern = a.payload.get("pattern")
+            path = a.payload.get("path", ".")
+            if not isinstance(pattern, str) or not pattern.strip():
+                return Decision(False, "GREP missing pattern", ())
+            if not isinstance(path, str):
+                return Decision(False, "GREP path must be string", ())
+            # Validate path if specified
+            if path != ".":
+                if not _is_confined_relative(path):
+                    return Decision(False, f"GREP path not confined: {path}", ())
+                if not _realpath_in_workspace(ws, path):
+                    return Decision(False, f"GREP path escapes via symlink: {path}", ())
+            approved.append(a)
+
+        elif a.type == "LIST_DIR":
+            path = a.payload.get("path", ".")
+            if not isinstance(path, str):
+                return Decision(False, "LIST_DIR path must be string", ())
+            if path != ".":
+                if not _is_confined_relative(path):
+                    return Decision(False, f"LIST_DIR path not confined: {path}", ())
+                if not _realpath_in_workspace(ws, path):
+                    return Decision(False, f"LIST_DIR path escapes via symlink: {path}", ())
+            approved.append(a)
+
+        elif a.type == "GIT_DIFF":
+            # No payload required - just returns diff of current workspace
             approved.append(a)
 
         else:
