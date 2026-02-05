@@ -1,0 +1,44 @@
+# Minimal CI smoke: runs the agent against THIS repo as a toy workspace.
+# This does not evaluate SWE-bench; it proves the loop runs and logs a ledger.
+name: swe_agent_smoke
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [main]
+    pull_request:
+
+jobs:
+    smoke:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install (dev)
+              run: |
+                  python -m pip install -U pip
+                  python -m pip install -e ".[dev]"
+
+            - name: Smoke run agent (no LLM)
+              env:
+                  # Intentionally omitted: LLM_API_KEY. This should fail fast and prove config enforcement.
+                  # If you want it to actually run with a model, set these as GH Actions secrets.
+                  LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+                  LLM_MODEL: ${{ secrets.LLM_MODEL }}
+                  LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+              run: |
+                  mkdir -p run_logs
+                  # Run against this repo as workspace. It may already pass tests.
+                  python rfsn_swe_agent.py --workspace . --task-id smoke --attempts 2 --verbose
+
+            - name: Upload logs
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: rfsn_swe_agent_logs
+                  path: run_logs/

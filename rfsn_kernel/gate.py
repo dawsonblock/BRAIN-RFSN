@@ -1,8 +1,9 @@
 # rfsn_kernel/gate.py
 from __future__ import annotations
 
-from typing import List
 import os
+import re
+from typing import List
 
 from .types import StateSnapshot, Proposal, Action, Decision
 from .patch_safety import patch_paths_are_confined
@@ -30,11 +31,34 @@ def _is_in_workspace(workspace: str, abs_path: str) -> bool:
     return common == ws
 
 
+
+# Safe pytest nodeid pattern: path/to/file.py::ClassName::test_name
+_PYTEST_NODEID_SAFE = re.compile(r"^[A-Za-z0-9_./:-]+(::[A-Za-z0-9_./:-]+)*$")
+
+
 def is_allowed_tests_argv(argv: List[str]) -> bool:
+    """
+    Check if test argv matches allowlist.
+    
+    Allowed forms:
+    - ["pytest", "-q"]
+    - ["python", "-m", "pytest", "-q"]
+    - ["pytest", "-q", "tests/foo.py::TestClass::test_bar"]  # safe nodeids
+    """
     norm = [str(x).strip() for x in argv if str(x).strip() != ""]
     for prefix in _ALLOWED_TEST_PREFIXES:
         if norm[: len(prefix)] == prefix:
-            return True
+            # Exact match (no suffix)
+            if len(norm) == len(prefix):
+                return True
+            # Check suffix: only safe nodeids allowed (no flags like --cov, -s, etc.)
+            suffix = norm[len(prefix):]
+            # Reject anything starting with - (flags)
+            if any(s.startswith("-") for s in suffix):
+                return False
+            # All suffix items must be safe nodeids
+            if all(_PYTEST_NODEID_SAFE.match(s) for s in suffix):
+                return True
     return False
 
 
