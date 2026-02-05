@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RFSN Control Center</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-brand">
+            <div class="nav-logo">⚡</div>
+            <span class="nav-title">RFSN</span>
+            <span class="nav-subtitle">Control Center</span>
+        </div>
+        <div class="nav-status">
+            <span class="status-dot"></span>
+            <span>System Online</span>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <main class="container">
+        <!-- Stats Row -->
+        <section class="stats-row">
+            <div class="stat-card">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #667eea, #764ba2);">📊</div>
+                <div class="stat-content">
+                    <div class="stat-value" id="test-count">92</div>
+                    <div class="stat-label">Tests Passing</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #f093fb, #f5576c);">🎯</div>
+                <div class="stat-content">
+                    <div class="stat-value" id="arm-count">8</div>
+                    <div class="stat-label">Policy Arms</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #4facfe, #00f2fe);">🔐</div>
+                <div class="stat-content">
+                    <div class="stat-value" id="gate-count">7</div>
+                    <div class="stat-label">Action Types</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #43e97b, #38f9d7);">📝</div>
+                <div class="stat-content">
+                    <div class="stat-value" id="ledger-count">0</div>
+                    <div class="stat-label">Ledger Entries</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Left Column -->
+            <div class="left-column">
+                <!-- Agent Control Panel -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>🚀 Agent Control</h2>
+                        <span class="badge badge-primary">Ready</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label>Workspace Path</label>
+                            <input type="text" id="workspace-path" class="input" placeholder="/path/to/repo">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Task ID</label>
+                                <input type="text" id="task-id" class="input" value="local_task">
+                            </div>
+                            <div class="form-group">
+                                <label>Max Attempts</label>
+                                <input type="number" id="max-attempts" class="input" value="6" min="1" max="20">
+                            </div>
+                        </div>
+                        <div class="btn-row">
+                            <button class="btn btn-primary" onclick="startAgent()">
+                                <span>▶</span> Start Agent
+                            </button>
+                            <button class="btn btn-secondary" onclick="stopAgent()">
+                                <span>⏹</span> Stop
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Policy Arms Selector -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>🎯 Policy Arms</h2>
+                        <span class="badge badge-success">8 Active</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="arms-grid" id="arms-grid">
+                            <!-- Arms will be populated by JS -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Context Builder Preview -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>📦 Context Builder</h2>
+                        <button class="btn btn-sm" onclick="previewContext()">Preview</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Max Files</label>
+                                <input type="number" id="ctx-max-files" class="input" value="12" min="1" max="20">
+                            </div>
+                            <div class="form-group">
+                                <label>Max Bytes</label>
+                                <input type="number" id="ctx-max-bytes" class="input" value="240000" step="10000">
+                            </div>
+                        </div>
+                        <div class="context-preview" id="context-preview">
+                            <div class="preview-placeholder">Run agent to see context preview...</div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column -->
+            <div class="right-column">
+                <!-- Bandit Learning -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>📈 Bandit Learning</h2>
+                        <span class="badge badge-info">Thompson Sampling</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="bandit-chart" id="bandit-chart">
+                            <!-- Bandit bars will be populated by JS -->
+                        </div>
+                        <div class="bandit-legend">
+                            <div class="legend-item">
+                                <span class="legend-color" style="background: #667eea;"></span>
+                                <span>Successes</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-color" style="background: #e0e0e0;"></span>
+                                <span>Trials</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Ledger Viewer -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>📋 Ledger</h2>
+                        <button class="btn btn-sm" onclick="refreshLedger()">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="ledger-entries" id="ledger-entries">
+                            <div class="ledger-entry">
+                                <span class="entry-time">--:--:--</span>
+                                <span class="entry-type badge badge-secondary">WAITING</span>
+                                <span class="entry-desc">No ledger entries yet</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Test Runner -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>🧪 Test Runner</h2>
+                        <span class="badge badge-success" id="test-status">Idle</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label>Pytest Args</label>
+                            <input type="text" id="pytest-args" class="input" value="-q --tb=short">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="use-sandbox"> Run in Docker Sandbox
+                            </label>
+                        </div>
+                        <button class="btn btn-primary btn-block" onclick="runTests()">
+                            Run Tests
+                        </button>
+                        <div class="test-output" id="test-output">
+                            <pre>Click "Run Tests" to see output...</pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- GIT_DIFF Audit -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>🔍 Git Diff Audit</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Context Lines</label>
+                                <input type="number" id="diff-context" class="input" value="3" min="0" max="10">
+                            </div>
+                            <div class="form-group">
+                                <label>Paths (comma-sep)</label>
+                                <input type="text" id="diff-paths" class="input" placeholder="src/, tests/">
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-block" onclick="runDiff()">
+                            Get Diff
+                        </button>
+                        <div class="diff-output" id="diff-output">
+                            <pre>No diff yet...</pre>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <span>RFSN Kernel v1.0</span>
+            <span>•</span>
+            <span>Gate is FINAL AUTHORITY</span>
+            <span>•</span>
+            <span>92 Tests Passing</span>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
