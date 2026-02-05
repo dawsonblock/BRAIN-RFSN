@@ -40,6 +40,7 @@ from upstream_learner.bandit import ThompsonBandit
 from upstream_learner.prompt_bank import default_prompt_bank
 
 from rfsn_swe_llm import LLMClient, extract_unified_diff
+from context_builder import build_context_pack, format_context_pack
 
 
 # --------- small utilities ---------
@@ -104,12 +105,12 @@ def build_prompt(
     task_id: str,
     test_stdout: str,
     test_stderr: str,
-    context_files: List[Tuple[str, str]],
+    context_pack_text: str,
 ) -> str:
     """
     The prompt is deliberately rigid:
     - Provide failing output
-    - Provide selected files
+    - Provide context pack (built by context_builder)
     - Demand a unified diff only
     """
     parts: List[str] = []
@@ -124,12 +125,7 @@ def build_prompt(
     parts.append("=== PYTEST STDERR (tail) ===")
     parts.append(_cap(test_stderr, 8000))
     parts.append("")
-    parts.append("=== CONTEXT FILES ===")
-    for path, text in context_files:
-        parts.append(f"--- FILE: {path} ---")
-        parts.append(_cap(text, 120_000))
-        parts.append(f"--- END FILE: {path} ---")
-        parts.append("")
+    parts.append(context_pack_text)
     return "\n".join(parts)
 
 
@@ -242,27 +238,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     for attempt in range(1, args.attempts + 1):
         arm_id = bandit.choose(method="thompson")
 
-        hot_paths = parse_hot_paths(out_stdout + "\n" + out_stderr, limit=12)
-        if not hot_paths:
-            # fallback: shallow set that usually exists
-            hot_paths = ["pyproject.toml", "pytest.ini", "setup.cfg", "setup.py", "requirements.txt"]
-
-        context_files = _read_files_via_gate(
+        # Build context pack using deterministic context builder
+        pack = build_context_pack(
             ledger_path=args.ledger,
             workspace=args.workspace,
             task_id=args.task_id,
-            paths=hot_paths,
+            pytest_stdout=out_stdout,
+            pytest_stderr=out_stderr,
+            focus_paths=None,
+            max_files=12,
+            max_total_bytes=240_000,
+            max_per_file_bytes=60_000,
+            max_grep_patterns=10,
         )
+        context_pack_text = format_context_pack(pack)
 
         prompt = build_prompt(
             task_id=args.task_id,
             test_stdout=out_stdout,
             test_stderr=out_stderr,
-            context_files=context_files,
+            context_pack_text=context_pack_text,
         )
 
         if args.verbose:
-            print(f"[attempt {attempt}] arm={arm_id} hot_paths={len(hot_paths)} ctx_files={len(context_files)}")
+            print(f"[attempt {attempt}] arm={arm_id} ctx_files={len(pack.files)} bytes={pack.meta.get('bytes_total')}")
 
         # Ask model for a diff; extract defensively.
         raw = llm.complete(prompt=prompt)
