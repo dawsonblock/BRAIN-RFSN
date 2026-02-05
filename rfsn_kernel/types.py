@@ -34,6 +34,32 @@ class Decision:
     allowed: bool
     reason: str
     approved_actions: Tuple[Action, ...]
+    _gate_sig: str = ""  # Signature proving this Decision came from gate
+
+
+# Gate secret - module-level, not exported
+_GATE_SECRET = "rfsn_gate_authority_v1"
+
+
+def _compute_decision_sig(allowed: bool, reason: str, actions: Tuple[Action, ...]) -> str:
+    """Compute signature binding decision to gate."""
+    content = canonical_json({
+        "allowed": allowed,
+        "reason": reason,
+        "actions": [dataclass_to_dict(a) for a in actions],
+        "secret": _GATE_SECRET,
+    })
+    return sha256_hex(content)[:16]  # 16 hex chars = 64 bits
+
+
+def verify_decision_sig(decision: Decision) -> bool:
+    """Verify that a Decision was created by the gate."""
+    expected = _compute_decision_sig(
+        decision.allowed, 
+        decision.reason, 
+        decision.approved_actions
+    )
+    return decision._gate_sig == expected
 
 
 @dataclass(frozen=True)

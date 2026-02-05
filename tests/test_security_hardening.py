@@ -170,3 +170,56 @@ class TestNodeidValidation:
             ["pytest", "-q", "tests/test_foo.py::test_x"],
             workspace=str(ws),
         ) is True
+
+
+class TestDecisionSignature:
+    """Tests for decision signature verification - gate is FINAL AUTHORITY."""
+
+    def test_forged_decision_rejected(self, tmp_path):
+        """Controller must reject decisions not created by gate."""
+        import pytest as pt
+        from rfsn_kernel.types import Decision, Action, StateSnapshot
+        from rfsn_kernel.controller import execute_decision
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+
+        state = StateSnapshot(workspace=str(ws), notes={})
+
+        # Attempt to forge a decision (no valid signature)
+        forged_action = Action(type="READ_FILE", payload={"path": "foo.txt"})
+        forged_decision = Decision(
+            allowed=True,
+            reason="forged",
+            approved_actions=(forged_action,),
+            _gate_sig="invalid",  # Wrong signature
+        )
+
+        # Controller MUST reject forged decisions
+        with pt.raises(RuntimeError, match="SECURITY.*gate is FINAL AUTHORITY"):
+            execute_decision(state, forged_decision)
+
+    def test_gate_decision_accepted(self, tmp_path):
+        """Controller must accept properly signed decisions from gate."""
+        from rfsn_kernel.types import Action, Proposal, StateSnapshot
+        from rfsn_kernel.gate import gate
+        from rfsn_kernel.controller import execute_decision
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+        (ws / "test.txt").write_text("content", encoding="utf-8")
+
+        state = StateSnapshot(workspace=str(ws), notes={})
+        action = Action(type="READ_FILE", payload={"path": "test.txt"})
+        proposal = Proposal(actions=(action,), meta={})
+
+        # Decision from gate has valid signature
+        decision = gate(state, proposal)
+        assert decision.allowed
+
+        # Controller accepts properly signed decision
+        results = execute_decision(state, decision)
+        assert len(results) == 1
+        assert results[0].ok

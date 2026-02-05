@@ -13,7 +13,7 @@ import os
 import subprocess
 from typing import Any, Dict, List, Tuple
 
-from .types import StateSnapshot, Decision, ExecResult
+from .types import StateSnapshot, Decision, ExecResult, verify_decision_sig
 from .gate import is_allowed_tests_argv
 from .patch_safety import patch_paths_are_confined
 
@@ -267,6 +267,10 @@ def _git_diff(workspace: str) -> Dict[str, Any]:
 
 
 def execute_decision(state: StateSnapshot, decision: Decision) -> Tuple[ExecResult, ...]:
+    # CRITICAL: Verify decision was created by gate (prevents forged decisions)
+    if not verify_decision_sig(decision):
+        raise RuntimeError("SECURITY: Decision signature invalid - gate is FINAL AUTHORITY")
+    
     if not decision.allowed:
         raise RuntimeError(f"decision denied: {decision.reason}")
 

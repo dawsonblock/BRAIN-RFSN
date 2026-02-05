@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import os
 import re
-from typing import List
+from typing import List, Tuple
 
-from .types import StateSnapshot, Proposal, Action, Decision
+from .types import StateSnapshot, Proposal, Action, Decision, _compute_decision_sig
 from .patch_safety import patch_paths_are_confined
 
 
@@ -115,7 +115,7 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
     ws = os.path.realpath(state.workspace)
 
     if not os.path.isdir(ws):
-        return Decision(False, f"workspace does not exist: {ws}", ())
+        return _make_decision(False, f"workspace does not exist: {ws}", ())
 
     approved: List[Action] = []
     total_write_bytes = 0
@@ -124,77 +124,77 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
         if a.type == "READ_FILE":
             rel = a.payload.get("path")
             if not isinstance(rel, str) or not rel:
-                return Decision(False, "READ_FILE missing path", ())
+                return _make_decision(False, "READ_FILE missing path", ())
             if not _is_confined_relative(rel):
-                return Decision(False, f"READ_FILE path not confined: {rel}", ())
+                return _make_decision(False, f"READ_FILE path not confined: {rel}", ())
             if not _realpath_in_workspace(ws, rel):
-                return Decision(False, f"READ_FILE escapes via symlink: {rel}", ())
+                return _make_decision(False, f"READ_FILE escapes via symlink: {rel}", ())
             approved.append(a)
 
         elif a.type == "WRITE_FILE":
             rel = a.payload.get("path")
             text = a.payload.get("text")
             if not isinstance(rel, str) or not rel:
-                return Decision(False, "WRITE_FILE missing path", ())
+                return _make_decision(False, "WRITE_FILE missing path", ())
             if not isinstance(text, str):
-                return Decision(False, "WRITE_FILE missing text", ())
+                return _make_decision(False, "WRITE_FILE missing text", ())
             if not _is_confined_relative(rel):
-                return Decision(False, f"WRITE_FILE path not confined: {rel}", ())
+                return _make_decision(False, f"WRITE_FILE path not confined: {rel}", ())
             if not _realpath_in_workspace(ws, rel):
-                return Decision(False, f"WRITE_FILE escapes via symlink: {rel}", ())
+                return _make_decision(False, f"WRITE_FILE escapes via symlink: {rel}", ())
             
             # Enforce write caps
             nbytes = len(text.encode("utf-8", errors="replace"))
             if nbytes > _MAX_WRITE_BYTES:
-                return Decision(False, f"WRITE_FILE exceeds per-file cap: {nbytes} > {_MAX_WRITE_BYTES}", ())
+                return _make_decision(False, f"WRITE_FILE exceeds per-file cap: {nbytes} > {_MAX_WRITE_BYTES}", ())
             total_write_bytes += nbytes
             if total_write_bytes > _MAX_TOTAL_WRITE_BYTES:
-                return Decision(False, f"WRITE_FILE exceeds proposal cap: {total_write_bytes} > {_MAX_TOTAL_WRITE_BYTES}", ())
+                return _make_decision(False, f"WRITE_FILE exceeds proposal cap: {total_write_bytes} > {_MAX_TOTAL_WRITE_BYTES}", ())
             
             approved.append(a)
 
         elif a.type == "APPLY_PATCH":
             patch = a.payload.get("patch")
             if not isinstance(patch, str) or not patch.strip():
-                return Decision(False, "APPLY_PATCH missing patch", ())
+                return _make_decision(False, "APPLY_PATCH missing patch", ())
             # Hard requirement: patch paths must be parseable and confined
             ok, reason, _files = patch_paths_are_confined(ws, patch)
             if not ok:
-                return Decision(False, f"APPLY_PATCH rejected: {reason}", ())
+                return _make_decision(False, f"APPLY_PATCH rejected: {reason}", ())
             approved.append(a)
 
         elif a.type == "RUN_TESTS":
             argv = a.payload.get("argv")
             if not isinstance(argv, list) or not all(isinstance(x, str) for x in argv):
-                return Decision(False, "RUN_TESTS argv must be list[str]", ())
+                return _make_decision(False, "RUN_TESTS argv must be list[str]", ())
             if not is_allowed_tests_argv(argv, workspace=ws):
-                return Decision(False, f"RUN_TESTS argv not allowlisted: {argv}", ())
+                return _make_decision(False, f"RUN_TESTS argv not allowlisted: {argv}", ())
             approved.append(a)
 
         elif a.type == "GREP":
             pattern = a.payload.get("pattern")
             path = a.payload.get("path", ".")
             if not isinstance(pattern, str) or not pattern.strip():
-                return Decision(False, "GREP missing pattern", ())
+                return _make_decision(False, "GREP missing pattern", ())
             if not isinstance(path, str):
-                return Decision(False, "GREP path must be string", ())
+                return _make_decision(False, "GREP path must be string", ())
             # Validate path if specified
             if path != ".":
                 if not _is_confined_relative(path):
-                    return Decision(False, f"GREP path not confined: {path}", ())
+                    return _make_decision(False, f"GREP path not confined: {path}", ())
                 if not _realpath_in_workspace(ws, path):
-                    return Decision(False, f"GREP path escapes via symlink: {path}", ())
+                    return _make_decision(False, f"GREP path escapes via symlink: {path}", ())
             approved.append(a)
 
         elif a.type == "LIST_DIR":
             path = a.payload.get("path", ".")
             if not isinstance(path, str):
-                return Decision(False, "LIST_DIR path must be string", ())
+                return _make_decision(False, "LIST_DIR path must be string", ())
             if path != ".":
                 if not _is_confined_relative(path):
-                    return Decision(False, f"LIST_DIR path not confined: {path}", ())
+                    return _make_decision(False, f"LIST_DIR path not confined: {path}", ())
                 if not _realpath_in_workspace(ws, path):
-                    return Decision(False, f"LIST_DIR path escapes via symlink: {path}", ())
+                    return _make_decision(False, f"LIST_DIR path escapes via symlink: {path}", ())
             approved.append(a)
 
         elif a.type == "GIT_DIFF":
@@ -202,6 +202,12 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
             approved.append(a)
 
         else:
-            return Decision(False, f"unknown action type: {a.type}", ())
+            return _make_decision(False, f"unknown action type: {a.type}", ())
 
-    return Decision(True, "OK", tuple(approved))
+    return _make_decision(True, "OK", tuple(approved))
+
+
+def _make_decision(allowed: bool, reason: str, actions: Tuple[Action, ...]) -> Decision:
+    """Create a signed Decision that the controller can verify."""
+    sig = _compute_decision_sig(allowed, reason, actions)
+    return Decision(allowed=allowed, reason=reason, approved_actions=actions, _gate_sig=sig)
