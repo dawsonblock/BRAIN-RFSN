@@ -14,3 +14,4 @@ build/
 # runtime artifacts
 run_logs/
 outcomes.sqlite
+swebench_runs/

@@ -67,8 +67,39 @@ rfsn_swe_agent.py     # LLM agent loop (proposer spine)
 rfsn_swe_llm.py       # Stdlib OpenAI client
 rfsn_cli.py           # CLI wrapper
 
+swebench_runner.py    # Task harness (checkout, run agent, capture artifacts)
+swebench_tasks.py     # Task loader (JSON/JSONL)
+swebench_utils.py     # Utilities
+
 docs/                 # Additional documentation
 ```
+
+## SWE-bench Harness
+
+Run your agent against a list of tasks:
+
+```bash
+export LLM_API_KEY="..."
+export LLM_MODEL="gpt-4.1-mini"
+export LLM_BASE_URL="https://api.openai.com/v1/chat/completions"
+
+python swebench_runner.py \
+  --tasks ./tasks_example.jsonl \
+  --out ./swebench_runs \
+  --max-tasks 10 \
+  --attempts 8 \
+  --timeout-s 900 \
+  --verbose
+```
+
+Artifacts per task:
+
+- `workspace/` (checked out repo)
+- `ledger.jsonl` (kernel log)
+- `agent_stdout.txt` / `agent_stderr.txt`
+- `RESULT.json`
+
+Summary: `swebench_runs/SUMMARY.json`
 
 ## Security Model
 
