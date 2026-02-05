@@ -1,17 +1,53 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .venv/
 venv/
+env/
 dist/
 build/
 *.egg-info/
+.eggs/
+
+# Logs
 *.log
 
-# runtime artifacts
+# Runtime artifacts
 run_logs/
 outcomes.sqlite
 swebench_runs/
+ui_runs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Node (for frontend)
+node_modules/
+ui/frontend/dist/
+ui/frontend/node_modules/
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+
+# Secrets (never commit)
+*.pem
+*.key
