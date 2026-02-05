@@ -74,7 +74,7 @@ class TestGrepAction:
         
         decision = gate(state, proposal)
         assert not decision.allowed
-        assert "missing pattern" in decision.reason
+        assert "empty" in decision.reason or "GREP rejected" in decision.reason
 
 
 class TestListDirAction:

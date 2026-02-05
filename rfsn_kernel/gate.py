@@ -33,6 +33,10 @@ _MAX_GREP_RESULTS = 100             # max lines returned by GREP
 _MAX_LIST_DIR_ENTRIES = 500         # max entries returned by LIST_DIR
 _MAX_GIT_DIFF_BYTES = 512_000       # 512 KB for GIT_DIFF output
 
+# GREP policy: prevent regex DoS
+_MAX_GREP_PATTERN_LEN = 300
+_SUSPICIOUS_REGEX = re.compile(r"(\(\.\+\)\+)|(\(\.\*\)\+)|(\.\+\+)|(\.\*\+)|(\+\+)")
+
 
 def _realpath_in_workspace(workspace: str, user_path: str) -> bool:
     """
@@ -83,6 +87,24 @@ def _validate_nodeid_path(workspace: str, nodeid: str) -> bool:
     
     # Realpath check
     return _realpath_in_workspace(workspace, file_part)
+
+
+def _validate_grep_pattern(pattern: str) -> Tuple[bool, str]:
+    """
+    Validate GREP pattern to prevent regex DoS.
+    
+    Policy:
+    - Max 300 chars
+    - Reject catastrophic backtracking patterns like (.+)+, (.*)+, .++, etc.
+    """
+    pat = (pattern or "").strip()
+    if not pat:
+        return False, "empty grep pattern"
+    if len(pat) > _MAX_GREP_PATTERN_LEN:
+        return False, f"grep pattern too long ({len(pat)} > {_MAX_GREP_PATTERN_LEN})"
+    if _SUSPICIOUS_REGEX.search(pat):
+        return False, "grep pattern contains suspicious regex construct"
+    return True, "ok"
 
 
 def is_allowed_tests_argv(argv: List[str], *, workspace: str) -> bool:
@@ -174,8 +196,12 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
         elif a.type == "GREP":
             pattern = a.payload.get("pattern")
             path = a.payload.get("path", ".")
-            if not isinstance(pattern, str) or not pattern.strip():
-                return _make_decision(False, "GREP missing pattern", ())
+            if not isinstance(pattern, str):
+                return _make_decision(False, "GREP pattern must be string", ())
+            # Validate pattern (length + regex DoS)
+            ok, why = _validate_grep_pattern(pattern)
+            if not ok:
+                return _make_decision(False, f"GREP rejected: {why}", ())
             if not isinstance(path, str):
                 return _make_decision(False, "GREP path must be string", ())
             # Validate path if specified
