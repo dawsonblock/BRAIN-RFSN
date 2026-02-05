@@ -95,8 +95,10 @@ def patch_paths_are_confined(workspace: str, patch_text: str) -> Tuple[bool, str
     """
     Enforce that every touched file path (old/new) is inside the workspace when resolved.
     Also rejects absolute paths and traversal during parsing.
+    Uses realpath to prevent symlink escapes.
     """
-    ws = os.path.abspath(workspace)
+    # Realpath confinement: prevents symlink escapes inside workspace.
+    ws = os.path.realpath(workspace)
     try:
         files = parse_unified_diff_files(patch_text)
     except Exception as e:
@@ -108,7 +110,8 @@ def patch_paths_are_confined(workspace: str, patch_text: str) -> Tuple[bool, str
     def in_ws(rel: str) -> bool:
         if rel == "/dev/null":
             return True
-        ap = os.path.abspath(os.path.join(ws, rel))
+        # Resolve the target path through filesystem links.
+        ap = os.path.realpath(os.path.join(ws, rel))
         try:
             return os.path.commonpath([ws, ap]) == ws
         except ValueError:
