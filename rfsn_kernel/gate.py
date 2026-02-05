@@ -191,6 +191,14 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
                 return _make_decision(False, "RUN_TESTS argv must be list[str]", ())
             if not is_allowed_tests_argv(argv, workspace=ws):
                 return _make_decision(False, f"RUN_TESTS argv not allowlisted: {argv}", ())
+            # Optional execution mode: host|docker (controller decides implementation)
+            mode = a.payload.get("mode")
+            if mode is not None:
+                if not isinstance(mode, str):
+                    return _make_decision(False, "RUN_TESTS mode must be string", ())
+                m = mode.strip().lower()
+                if m not in ("host", "docker"):
+                    return _make_decision(False, f"RUN_TESTS mode invalid: {m}", ())
             approved.append(a)
 
         elif a.type == "GREP":

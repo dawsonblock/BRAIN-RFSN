@@ -26,6 +26,25 @@ _MAX_GREP_OUTPUT_BYTES = 512_000
 _MAX_LIST_DIR_ENTRIES = 500
 _MAX_GIT_DIFF_BYTES = 512_000
 
+# Test execution mode:
+# - "host": run pytest on host (default)
+# - "docker": run pytest inside docker sandbox (if available)
+#
+# Set globally via env:
+#   RFSN_TEST_MODE=host|docker
+#
+# Or per action with:
+#   Action("RUN_TESTS", {"argv":[...], "mode":"docker"})
+_DEFAULT_TEST_MODE = (os.environ.get("RFSN_TEST_MODE") or "host").strip().lower()
+
+
+def _get_test_mode(payload: Dict[str, Any]) -> str:
+    """Get test execution mode from action payload or default."""
+    m = payload.get("mode")
+    if isinstance(m, str) and m.strip():
+        return m.strip().lower()
+    return _DEFAULT_TEST_MODE
+
 
 def _realpath_in_workspace(workspace: str, user_path: str) -> bool:
     """
@@ -130,23 +149,67 @@ def _apply_patch_minimal(workspace: str, patch: str) -> Dict[str, Any]:
     }
 
 
-def _run_tests(workspace: str, argv: List[str], timeout_s: int = 600) -> Dict[str, Any]:
+def _run_tests(
+    workspace: str,
+    argv: List[str],
+    timeout_s: int = 600,
+    mode: str = "host",
+) -> Dict[str, Any]:
+    """
+    Execute tests with configurable execution mode.
+
+    Args:
+        workspace: Path to workspace
+        argv: Test command, e.g. ["pytest", "-q"]
+        timeout_s: Timeout in seconds
+        mode: "host" (default) or "docker" for sandboxed execution
+
+    Returns:
+        Dict with ok, returncode, stdout, stderr, mode
+    """
     if not is_allowed_tests_argv(argv, workspace=workspace):
         raise RuntimeError("RUN_TESTS argv failed allowlist re-check")
+
     ws = os.path.realpath(workspace)
-    proc = subprocess.run(
-        argv,
-        cwd=ws,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout_s,
-    )
-    return {
-        "returncode": proc.returncode,
-        "stdout": _tail(proc.stdout.decode("utf-8", errors="replace"), _MAX_TEST_OUTPUT_CHARS),
-        "stderr": _tail(proc.stderr.decode("utf-8", errors="replace"), _MAX_TEST_OUTPUT_CHARS),
-        "ok": proc.returncode == 0,
-    }
+
+    if mode == "docker":
+        # Lazy import to avoid breaking host-only deployments
+        try:
+            from docker_runner import run_tests_sandboxed
+        except ImportError as e:
+            return {
+                "ok": False,
+                "returncode": -1,
+                "stdout": "",
+                "stderr": f"Docker mode unavailable: {e}",
+                "mode": "docker",
+            }
+
+        result = run_tests_sandboxed(
+            workspace=ws,
+            argv=argv,
+            timeout_s=timeout_s,
+        )
+        # Ensure caps on output
+        result["stdout"] = _tail(result.get("stdout", ""), _MAX_TEST_OUTPUT_CHARS)
+        result["stderr"] = _tail(result.get("stderr", ""), _MAX_TEST_OUTPUT_CHARS)
+        result["mode"] = "docker"
+        return result
+    else:
+        # Host mode (default)
+        proc = subprocess.run(
+            argv,
+            cwd=ws,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+        return {
+            "returncode": proc.returncode,
+            "stdout": _tail(proc.stdout.decode("utf-8", errors="replace"), _MAX_TEST_OUTPUT_CHARS),
+            "stderr": _tail(proc.stderr.decode("utf-8", errors="replace"), _MAX_TEST_OUTPUT_CHARS),
+            "ok": proc.returncode == 0,
+            "mode": "host",
+        }
 
 
 def _grep(workspace: str, pattern: str, path: str = ".") -> Dict[str, Any]:
@@ -330,7 +393,8 @@ def execute_decision(state: StateSnapshot, decision: Decision) -> Tuple[ExecResu
             results.append(ExecResult(bool(out.get("applied")), a, out))
 
         elif a.type == "RUN_TESTS":
-            out = _run_tests(ws, a.payload["argv"])
+            mode = _get_test_mode(a.payload)
+            out = _run_tests(ws, a.payload["argv"], mode=mode)
             results.append(ExecResult(bool(out.get("ok")), a, out))
 
         elif a.type == "GREP":

@@ -203,3 +203,53 @@ def run_tests_sandboxed(
         "sandboxed": True,
         "timed_out": result.timed_out,
     }
+
+
+def run_pytest_in_docker(
+    *,
+    workspace: str,
+    argv: list[str],
+    timeout_s: int,
+    network: bool = False,
+    cpus: float = 1.0,
+    mem_mb: int = 2048,
+    image: str | None = None,
+) -> dict[str, Any]:
+    """
+    API wrapper for kernel integration.
+
+    Expected by controller.py when mode="docker".
+
+    Args:
+        workspace: Path to workspace
+        argv: Test command, e.g. ["pytest", "-q"]
+        timeout_s: Timeout in seconds
+        network: Allow network access (default False)
+        cpus: CPU limit (default 1.0)
+        mem_mb: Memory limit in MB (default 2048)
+        image: Docker image (default python:3.11-slim)
+
+    Returns:
+        Dict with returncode, stdout, stderr, meta
+    """
+    runner = DockerRunner(
+        workspace=workspace,
+        image=image or "python:3.11-slim",
+        timeout_s=timeout_s,
+        memory_mb=mem_mb,
+        cpu_limit=str(cpus),
+        network=network,
+    )
+
+    result = runner.run_tests(argv)
+
+    return {
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "ok": result.ok,
+        "meta": {
+            "timed_out": result.timed_out,
+            "sandboxed": True,
+        },
+    }
