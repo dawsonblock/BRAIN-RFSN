@@ -97,3 +97,92 @@ def test_run_manager():
         retrieved = manager.get_run(run.id)
         assert retrieved is not None
         assert retrieved.id == run.id
+
+
+# ============ FastAPI TestClient Tests ============
+
+import pytest
+
+
+@pytest.fixture
+def api_client():
+    """Create FastAPI test client."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "ui"))
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    return TestClient(app)
+
+
+class TestHealthEndpoints:
+    """Tests for health endpoints."""
+
+    def test_root_returns_ok(self, api_client):
+        """GET / should return status ok."""
+        resp = api_client.get("/")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+
+    def test_health_endpoint(self, api_client):
+        """GET /health should return healthy."""
+        resp = api_client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "healthy"
+
+
+class TestSecurityHeaders:
+    """Tests for security headers middleware."""
+
+    def test_csp_header_present(self, api_client):
+        """Responses should have CSP header."""
+        resp = api_client.get("/")
+        assert "Content-Security-Policy" in resp.headers
+
+    def test_x_content_type_options(self, api_client):
+        """Responses should have nosniff."""
+        resp = api_client.get("/")
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
+    def test_x_frame_options(self, api_client):
+        """Responses should have DENY frame options."""
+        resp = api_client.get("/")
+        assert resp.headers.get("X-Frame-Options") == "DENY"
+
+
+class TestSettingsEndpoint:
+    """Tests for settings endpoint."""
+
+    def test_get_settings_no_api_key_leak(self, api_client):
+        """GET /settings should not expose full API key."""
+        resp = api_client.get("/settings")
+        assert resp.status_code == 200
+        data = resp.json()
+        # Full api_key should not be present or should be empty
+        assert "api_key" not in data or data.get("api_key") == ""
+        assert "api_key_preview" in data
+
+
+class TestWebSocketEndpoint:
+    """Tests for WebSocket endpoint."""
+
+    def test_websocket_connection(self, api_client):
+        """WebSocket should accept valid connection."""
+        with api_client.websocket_connect("/ws/run/test-run-abc") as ws:
+            data = ws.receive_json()
+            assert data["type"] == "connected"
+            assert data["run_id"] == "test-run-abc"
+
+
+class TestEventBroadcastEndpoint:
+    """Tests for event broadcast endpoint."""
+
+    def test_post_event_accepted(self, api_client):
+        """POST /api/event should accept events."""
+        resp = api_client.post(
+            "/api/event/test-run?event_type=test",
+            json={"key": "value"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
