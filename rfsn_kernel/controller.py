@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .types import StateSnapshot, Decision, ExecResult, verify_decision_sig
 from .gate import is_allowed_tests_argv
@@ -234,19 +234,38 @@ def _list_dir(workspace: str, path: str = ".") -> Dict[str, Any]:
     }
 
 
-def _git_diff(workspace: str) -> Dict[str, Any]:
+def _git_diff(
+    workspace: str,
+    paths: Optional[List[str]] = None,
+    context_lines: int = 3,
+) -> Dict[str, Any]:
     """
-    Safe git diff with output cap.
+    Safe git diff with output cap and bounded context.
+    
+    Args:
+        workspace: Path to git repo
+        paths: Optional list of paths to restrict diff to
+        context_lines: Number of context lines (0-10, default 3, use 1 for minimal)
+    
     Returns current uncommitted changes.
     """
     ws = os.path.realpath(workspace)
+    paths = paths or []
     
     if not os.path.isdir(os.path.join(ws, ".git")):
         return {"ok": False, "error": "not a git repo", "diff": ""}
     
+    # Build git diff command with bounded context
+    cmd = ["git", "diff", f"-U{context_lines}"]
+    
+    # Add paths if specified (already validated by gate)
+    if paths:
+        cmd.append("--")
+        cmd.extend(paths)
+    
     try:
         proc = subprocess.run(
-            ["git", "diff", "--stat"],
+            cmd,
             cwd=ws,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -256,13 +275,20 @@ def _git_diff(workspace: str) -> Dict[str, Any]:
         return {"ok": False, "error": "git diff timeout", "diff": ""}
     
     diff = proc.stdout.decode("utf-8", errors="replace")
+    
+    # Truncate if too large
+    truncated = False
     if len(diff) > _MAX_GIT_DIFF_BYTES:
         diff = diff[:_MAX_GIT_DIFF_BYTES] + "\n[truncated]"
+        truncated = True
     
     return {
         "ok": True,
         "diff": diff,
         "returncode": proc.returncode,
+        "paths": paths,
+        "context_lines": context_lines,
+        "truncated": truncated,
     }
 
 
@@ -330,7 +356,9 @@ def execute_decision(state: StateSnapshot, decision: Decision) -> Tuple[ExecResu
             results.append(ExecResult(bool(out.get("ok")), a, out))
 
         elif a.type == "GIT_DIFF":
-            out = _git_diff(ws)
+            paths = a.payload.get("paths", [])
+            context_lines = a.payload.get("context_lines", 3)
+            out = _git_diff(ws, paths=paths, context_lines=context_lines)
             results.append(ExecResult(bool(out.get("ok")), a, out))
 
         else:

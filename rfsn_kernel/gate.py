@@ -224,7 +224,24 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
             approved.append(a)
 
         elif a.type == "GIT_DIFF":
-            # No payload required - just returns diff of current workspace
+            # Optional: paths (list of relative paths), context_lines (0-10)
+            paths = a.payload.get("paths", [])
+            context_lines = a.payload.get("context_lines", 3)  # Default: 3 lines context
+            
+            # Validate paths if provided
+            if paths:
+                if not isinstance(paths, list) or len(paths) > 20:
+                    return _make_decision(False, "GIT_DIFF paths must be list of max 20 paths", ())
+                for path in paths:
+                    if not isinstance(path, str) or not path:
+                        return _make_decision(False, "GIT_DIFF paths must be non-empty strings", ())
+                    if not _is_confined_relative(path):
+                        return _make_decision(False, f"GIT_DIFF path not confined: {path}", ())
+            
+            # Validate context lines
+            if not isinstance(context_lines, int) or context_lines < 0 or context_lines > 10:
+                return _make_decision(False, "GIT_DIFF context_lines must be 0-10", ())
+            
             approved.append(a)
 
         else:

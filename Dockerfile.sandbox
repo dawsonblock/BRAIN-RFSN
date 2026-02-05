@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+# Security: run as non-root user
+RUN useradd -m -s /bin/bash runner
+
+# Install common test dependencies
+RUN pip install --no-cache-dir pytest pytest-timeout
+
+# Set working directory
+WORKDIR /workspace
+
+# Switch to non-root user
+USER runner
+
+# Default command
+CMD ["pytest", "-q"]
