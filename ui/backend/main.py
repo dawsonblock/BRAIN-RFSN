@@ -7,10 +7,13 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, PlainTextResponse
 from pydantic import BaseModel
+from datetime import datetime
+import json
+from dataclasses import dataclass, field
 
 from .security import is_path_confined, validate_run_id, safe_join, ConfinementError
 from .ledger_parse import (
@@ -443,6 +446,88 @@ async def save_settings_endpoint(req: SettingsRequest):
     }
     save_settings(settings)
     return {"status": "saved"}
+
+
+# ============ WebSocket Session Management ============
+
+@dataclass
+class WsSession:
+    """Track WebSocket connections for a run."""
+    run_id: str
+    clients: set = field(default_factory=set)
+
+
+WS_SESSIONS: Dict[str, WsSession] = {}
+
+
+async def broadcast_event(run_id: str, event_type: str, payload: Dict[str, Any]) -> None:
+    """Broadcast an event to all WebSocket clients watching a run."""
+    if run_id not in WS_SESSIONS:
+        return
+    session = WS_SESSIONS[run_id]
+    message = {
+        "type": event_type,
+        "ts": datetime.utcnow().isoformat(),
+        **payload,
+    }
+    dead: List[WebSocket] = []
+    for ws in list(session.clients):
+        try:
+            await ws.send_json(message)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        session.clients.discard(ws)
+
+
+@app.websocket("/ws/run/{run_id}")
+async def ws_run(ws: WebSocket, run_id: str):
+    """WebSocket endpoint for real-time run events."""
+    try:
+        validate_run_id(run_id)
+    except ConfinementError:
+        await ws.close(code=1008, reason="Invalid run_id")
+        return
+
+    await ws.accept()
+
+    # Register client
+    if run_id not in WS_SESSIONS:
+        WS_SESSIONS[run_id] = WsSession(run_id=run_id)
+    WS_SESSIONS[run_id].clients.add(ws)
+
+    try:
+        await ws.send_json({
+            "type": "connected",
+            "run_id": run_id,
+            "ts": datetime.utcnow().isoformat(),
+        })
+        # Keep alive until disconnect
+        while True:
+            _ = await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        if run_id in WS_SESSIONS:
+            WS_SESSIONS[run_id].clients.discard(ws)
+
+
+@app.post("/api/event/{run_id}")
+async def post_event(
+    run_id: str,
+    event_type: str = Query(...),
+    payload: Dict[str, Any] = None,
+):
+    """Post an event to broadcast to all WebSocket clients watching a run."""
+    try:
+        validate_run_id(run_id)
+    except ConfinementError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await broadcast_event(run_id, event_type, payload or {})
+    return {"ok": True, "broadcast_to": len(WS_SESSIONS.get(run_id, WsSession(run_id)).clients)}
 
 
 # ============ Main ============
