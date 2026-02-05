@@ -218,6 +218,10 @@ def gate(state: StateSnapshot, proposal: Proposal) -> Decision:
                     return _make_decision(False, f"GREP path not confined: {path}", ())
                 if not _realpath_in_workspace(ws, path):
                     return _make_decision(False, f"GREP path escapes via symlink: {path}", ())
+            # Optional fixed_string mode (default: regex mode)
+            fixed_string = a.payload.get("fixed_string")
+            if fixed_string is not None and not isinstance(fixed_string, bool):
+                return _make_decision(False, "GREP fixed_string must be bool", ())
             approved.append(a)
 
         elif a.type == "LIST_DIR":

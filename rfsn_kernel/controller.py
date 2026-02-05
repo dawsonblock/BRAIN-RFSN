@@ -212,40 +212,85 @@ def _run_tests(
         }
 
 
-def _grep(workspace: str, pattern: str, path: str = ".") -> Dict[str, Any]:
+def _grep(
+    workspace: str,
+    pattern: str,
+    path: str = ".",
+    fixed_string: bool = False,
+) -> Dict[str, Any]:
     """
-    Safe grep with caps.
-    Uses grep -rn for recursive line-numbered search.
+    Safe grep with caps and directory exclusions.
+
+    Args:
+        workspace: Workspace path
+        pattern: Search pattern
+        path: Relative path to search in (default ".")
+        fixed_string: If True, use fixed-string matching (-F) instead of regex (-E)
+
+    Returns:
+        Dict with ok, pattern, path, matches, count, truncated
     """
     ws = os.path.realpath(workspace)
     target = os.path.join(ws, path) if path != "." else ws
-    
+
+    # Build command
+    cmd = ["grep", "-rn"]
+
+    # Fixed-string vs regex mode
+    if fixed_string:
+        cmd.append("-F")
+    else:
+        cmd.append("-E")
+
+    # File type includes (code + config + docs)
+    includes = [
+        "*.py", "*.txt", "*.md", "*.rst",
+        "*.json", "*.yaml", "*.yml", "*.toml",
+        "*.js", "*.ts", "*.jsx", "*.tsx",
+        "*.java", "*.go", "*.rs", "*.c", "*.h", "*.cpp",
+        "*.html", "*.css", "*.sh",
+    ]
+    for inc in includes:
+        cmd.append(f"--include={inc}")
+
+    # Directory excluses (noise + security)
+    excludes = [
+        ".git", "__pycache__", "node_modules",
+        ".venv", "venv", ".env",
+        "dist", "build", ".next", ".cache",
+        "coverage", "htmlcov", ".pytest_cache",
+        ".mypy_cache", ".ruff_cache",
+    ]
+    for exc in excludes:
+        cmd.append(f"--exclude-dir={exc}")
+
+    cmd.append(pattern)
+    cmd.append(target)
+
     try:
         proc = subprocess.run(
-            ["grep", "-rn", "-E", "--include=*.py", "--include=*.txt", "--include=*.md", 
-             "--include=*.json", "--include=*.yaml", "--include=*.yml", "--include=*.toml",
-             pattern, target],
+            cmd,
             cwd=ws,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=30,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "grep timeout", "matches": []}
-    
+
     raw = proc.stdout.decode("utf-8", errors="replace")
     # Cap output
     if len(raw) > _MAX_GREP_OUTPUT_BYTES:
         raw = raw[:_MAX_GREP_OUTPUT_BYTES] + "\n[truncated]"
-    
+
     # Parse lines and cap results
     lines = raw.strip().split("\n") if raw.strip() else []
     lines = lines[:_MAX_GREP_RESULTS]
-    
+
     return {
         "ok": True,
         "pattern": pattern,
         "path": path,
+        "fixed_string": fixed_string,
         "matches": lines,
         "count": len(lines),
         "truncated": len(lines) >= _MAX_GREP_RESULTS,
@@ -400,13 +445,14 @@ def execute_decision(state: StateSnapshot, decision: Decision) -> Tuple[ExecResu
         elif a.type == "GREP":
             pattern = a.payload["pattern"]
             path = a.payload.get("path", ".")
+            fixed_string = bool(a.payload.get("fixed_string", False))
             # Defense in depth: validate path again
             if path != ".":
                 if not _is_confined_relative(path):
                     raise RuntimeError(f"GREP path not confined: {path}")
                 if not _realpath_in_workspace(ws, path):
                     raise RuntimeError(f"GREP path escapes via symlink: {path}")
-            out = _grep(ws, pattern, path)
+            out = _grep(ws, pattern, path, fixed_string=fixed_string)
             results.append(ExecResult(bool(out.get("ok")), a, out))
 
         elif a.type == "LIST_DIR":
