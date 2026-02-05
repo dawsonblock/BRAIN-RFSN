@@ -39,6 +39,30 @@ app.add_middleware(
 )
 
 
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    # Content Security Policy - allow self and inline for dev
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self' http://localhost:* ws://localhost:*"
+    )
+    # Prevent MIME type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    # Prevent clickjacking
+    response.headers["X-Frame-Options"] = "DENY"
+    # Enable XSS filter
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    # Referrer policy
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
 # ============ Models ============
 
 class CreateRunRequest(BaseModel):
@@ -213,7 +237,7 @@ async def get_run_status(run_id: str):
 @app.get("/runs/{run_id}/logs")
 async def get_logs(
     run_id: str,
-    log_type: str = Query("stdout", regex="^(stdout|stderr)$"),
+    log_type: str = Query("stdout", pattern="^(stdout|stderr)$"),
     tail: int = Query(500, ge=1, le=10000),
 ):
     """Get log content."""
