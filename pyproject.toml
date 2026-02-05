@@ -5,11 +5,49 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "brain-rfsn"
 version = "0.1.0"
+description = "RFSN Safety Kernel - Hardware-boundary reasoning for AI agents"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.5.0",
+]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "mypy>=1.8.0",
+    "ruff>=0.2.0",
+]
+ui = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "sse-starlette>=1.6.0",
+]
+swebench = [
+    "httpx>=0.26.0",
+    "tiktoken>=0.5.2",
+]
+
+[project.scripts]
+rfsn = "rfsn_cli:main"
 
 [tool.setuptools]
 packages = ["rfsn_kernel", "rfsn_companion", "rfsn_companion.proposers", "upstream_learner"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+strict = false
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

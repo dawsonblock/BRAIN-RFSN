@@ -92,8 +92,8 @@ export function NewRunModal({ isOpen, onClose, onCreated }: Props) {
                             <button
                                 onClick={() => setMode('agent')}
                                 className={`flex-1 py-2 px-4 rounded-lg border ${mode === 'agent'
-                                        ? 'bg-primary-50 border-primary-500 text-primary-700'
-                                        : 'bg-gray-50 border-gray-300'
+                                    ? 'bg-primary-50 border-primary-500 text-primary-700'
+                                    : 'bg-gray-50 border-gray-300'
                                     }`}
                             >
                                 🔧 Single Agent
@@ -101,8 +101,8 @@ export function NewRunModal({ isOpen, onClose, onCreated }: Props) {
                             <button
                                 onClick={() => setMode('harness')}
                                 className={`flex-1 py-2 px-4 rounded-lg border ${mode === 'harness'
-                                        ? 'bg-primary-50 border-primary-500 text-primary-700'
-                                        : 'bg-gray-50 border-gray-300'
+                                    ? 'bg-primary-50 border-primary-500 text-primary-700'
+                                    : 'bg-gray-50 border-gray-300'
                                     }`}
                             >
                                 📋 Multi-Task Harness
@@ -156,6 +156,7 @@ export function NewRunModal({ isOpen, onClose, onCreated }: Props) {
                         <select
                             value={model}
                             onChange={(e) => setModel(e.target.value)}
+                            aria-label="LLM Model"
                             className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             <option value="gpt-4">GPT-4</option>
@@ -178,6 +179,7 @@ export function NewRunModal({ isOpen, onClose, onCreated }: Props) {
                                 onChange={(e) => setMaxAttempts(parseInt(e.target.value) || 6)}
                                 min={1}
                                 max={20}
+                                aria-label="Maximum attempts"
                                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
@@ -191,6 +193,7 @@ export function NewRunModal({ isOpen, onClose, onCreated }: Props) {
                                 onChange={(e) => setTimeout(parseInt(e.target.value) || 3600)}
                                 min={60}
                                 max={86400}
+                                aria-label="Timeout in seconds"
                                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>

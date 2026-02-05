@@ -212,7 +212,7 @@ def _list_dir(workspace: str, path: str = ".") -> Dict[str, Any]:
     result = []
     for name in entries:
         full = os.path.join(target, name)
-        entry = {"name": name}
+        entry: Dict[str, Any] = {"name": name}
         try:
             if os.path.isdir(full):
                 entry["type"] = "dir"

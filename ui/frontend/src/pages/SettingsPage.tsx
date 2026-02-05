@@ -70,6 +70,7 @@ export function SettingsPage() {
                         <select
                             value={model}
                             onChange={(e) => setModel(e.target.value)}
+                            aria-label="LLM Model"
                             className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                         >
                             <option value="gpt-4">GPT-4</option>
