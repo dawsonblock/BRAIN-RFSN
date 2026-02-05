@@ -37,7 +37,7 @@ from rfsn_kernel.ledger import append_ledger
 from rfsn_kernel.replay import verify_ledger_chain
 
 from upstream_learner.bandit import ThompsonBandit
-from upstream_learner.prompt_bank import default_prompt_bank
+from upstream_learner.policy_executor import PolicyExecutor
 
 from rfsn_swe_llm import LLMClient, extract_unified_diff
 from context_builder import build_context_pack, format_context_pack
@@ -106,6 +106,7 @@ def build_prompt(
     test_stdout: str,
     test_stderr: str,
     context_pack_text: str,
+    instruction_suffix: str = "",
 ) -> str:
     """
     The prompt is deliberately rigid:
@@ -118,6 +119,8 @@ def build_prompt(
     parts.append("")
     parts.append("You must output ONLY a unified diff (git-style) that applies cleanly with `git apply`.")
     parts.append("No commentary. No Markdown fences. Just the diff.")
+    if instruction_suffix:
+        parts.append(instruction_suffix)
     parts.append("")
     parts.append("=== PYTEST STDOUT (tail) ===")
     parts.append(_cap(test_stdout, 8000))
@@ -212,10 +215,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     os.makedirs(os.path.dirname(args.ledger), exist_ok=True)
 
-    bank = default_prompt_bank()
-    bandit = ThompsonBandit.load_or_create(args.bandit_path, seed=args.seed, decay=0.999)
-    for arm_id in bank.arms.keys():
-        bandit.ensure(arm_id)
+    executor = PolicyExecutor(
+        bandit=ThompsonBandit.load_or_create(args.bandit_path, seed=args.seed, decay=0.999)
+    )
 
     llm = LLMClient.from_env()
 
@@ -236,9 +238,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Attempts: read context -> ask LLM -> apply patch -> rerun tests
     for attempt in range(1, args.attempts + 1):
-        arm_id = bandit.choose(method="thompson")
+        arm_id = executor.select_arm()
+        plan = executor.get_execution_plan(arm_id)
+        if not plan:
+            if args.verbose:
+                print(f"[error] unknown arm {arm_id} selected")
+            continue
 
-        # Build context pack using deterministic context builder
+        # Build context pack using deterministic context builder with policy config
         pack = build_context_pack(
             ledger_path=args.ledger,
             workspace=args.workspace,
@@ -246,10 +253,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             pytest_stdout=out_stdout,
             pytest_stderr=out_stderr,
             focus_paths=None,
-            max_files=12,
-            max_total_bytes=240_000,
+            max_files=plan.context_config.max_files,
+            max_total_bytes=plan.context_config.max_total_bytes,
             max_per_file_bytes=60_000,
-            max_grep_patterns=10,
+            max_grep_patterns=plan.context_config.max_grep_patterns,
+            include_traceback_files=plan.context_config.include_traceback_files,
+            include_imports=plan.context_config.include_imports,
+            include_grep_expansion=plan.context_config.include_grep_expansion,
+            deep_grep=plan.context_config.deep_grep,
+            minimal_mode=plan.context_config.minimal_mode,
         )
         context_pack_text = format_context_pack(pack)
 
@@ -258,26 +270,39 @@ def main(argv: Optional[List[str]] = None) -> int:
             test_stdout=out_stdout,
             test_stderr=out_stderr,
             context_pack_text=context_pack_text,
+            instruction_suffix=plan.prompt_suffix,
         )
 
         if args.verbose:
             print(f"[attempt {attempt}] arm={arm_id} ctx_files={len(pack.files)} bytes={pack.meta.get('bytes_total')}")
 
         # Ask model for a diff; extract defensively.
-        raw = llm.complete(prompt=prompt)
+        # Pass policy-specific model parameters
+        raw = llm.complete(
+            prompt=prompt,
+            temperature=plan.model_config.temperature,
+            max_tokens=plan.model_config.max_tokens,
+            # model=plan.model_config.model_tier, # TODO: Map tiers to actual models if needed
+        )
         diff = extract_unified_diff(raw)
 
         if not diff.strip():
             # Update bandit as failure and keep going.
-            bandit.update(arm_id, 0.0)
-            bandit.bump_seed()
+            executor.record_outcome(arm_id, 0.0)
             if args.verbose:
                 print(f"[attempt {attempt}] model returned no usable diff")
             continue
 
         patch_state = StateSnapshot(
             workspace=args.workspace,
-            notes={"task_id": args.task_id, "phase": "patch", "attempt": attempt, "arm_id": arm_id},
+            notes={
+                "task_id": args.task_id,
+                "phase": "patch",
+                "attempt": attempt,
+                "arm_id": arm_id,
+                "policy_context": plan.arm.context.value,
+                "policy_model": plan.arm.model.value,
+            },
         )
         patch_prop = Proposal(
             actions=(
@@ -290,8 +315,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         out_stdout, out_stderr, ok = _last_run_tests_output(step.results)
 
         reward = 1.0 if (step.decision.allowed and ok) else 0.0
-        bandit.update(arm_id, reward)
-        bandit.bump_seed()
+        executor.record_outcome(arm_id, reward)
 
         if args.verbose:
             print(f"[attempt {attempt}] allowed={step.decision.allowed} ok={ok} reward={reward}")
@@ -299,7 +323,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if ok:
             break
 
-    bandit.save(args.bandit_path)
+    executor.bandit.save(args.bandit_path)
     verify_ledger_chain(args.ledger)
     return 0
 

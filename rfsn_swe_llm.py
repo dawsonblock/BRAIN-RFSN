@@ -67,7 +67,14 @@ class LLMClient:
             raise RuntimeError("LLM_API_KEY is required")
         return LLMClient(api_key=api_key, model=model, base_url=base_url, timeout_s=timeout_s)
 
-    def complete(self, *, prompt: str) -> str:
+    def complete(
+        self,
+        *,
+        prompt: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ) -> str:
         """
         OpenAI-compatible chat.completions request.
 
@@ -76,13 +83,15 @@ class LLMClient:
         - {"choices":[{"text":"..."}]}
         """
         payload: Dict[str, Any] = {
-            "model": self.model,
-            "temperature": 0.2,
+            "model": model or self.model,
+            "temperature": temperature if temperature is not None else 0.2,
             "messages": [
                 {"role": "system", "content": "You are a code repair model. Output only unified diffs."},
                 {"role": "user", "content": prompt},
             ],
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         data = json.dumps(payload).encode("utf-8")
 
         req = urllib.request.Request(

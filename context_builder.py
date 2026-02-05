@@ -225,10 +225,19 @@ def build_context_pack(
     max_total_bytes: int = 240_000,
     max_per_file_bytes: int = 60_000,
     max_grep_patterns: int = 10,
+    include_traceback_files: bool = True,
+    include_imports: bool = False,
+    include_grep_expansion: bool = True,
+    deep_grep: bool = False,
+    minimal_mode: bool = False,
 ) -> ContextPack:
     """Returns a deterministic ranked set of files with capped text."""
     combined = (pytest_stdout or "") + "\n" + (pytest_stderr or "")
-    trace_paths = _extract_traceback_paths(combined, limit=20)
+    
+    trace_paths: List[str] = []
+    if include_traceback_files:
+        trace_paths = _extract_traceback_paths(combined, limit=20)
+        
     exc_names = _extract_exception_names(combined, limit=10)
     symbols = _extract_symbols(combined, limit=20)
 
@@ -271,15 +280,16 @@ def build_context_pack(
         add_candidate(p, 5.0, "traceback/focus")
 
     # Use grep to expand candidates
-    for pat in patterns:
-        hits = _grep(ledger_path=ledger_path, workspace=workspace, task_id=task_id, pattern=pat, path=".")
-        hits_sorted = sorted(
-            hits,
-            key=lambda h: (str(h.get("path") or ""), str(h.get("line") or "0"), str(h.get("text") or "")),
-        )
-        for h in hits_sorted[:80]:
-            path = str(h.get("path") or "")
-            add_candidate(path, 2.0, f"grep:{pat}")
+    if include_grep_expansion:
+        for pat in patterns:
+            hits = _grep(ledger_path=ledger_path, workspace=workspace, task_id=task_id, pattern=pat, path=".")
+            hits_sorted = sorted(
+                hits,
+                key=lambda h: (str(h.get("path") or ""), str(h.get("line") or "0"), str(h.get("text") or "")),
+            )
+            for h in hits_sorted[:80]:
+                path = str(h.get("path") or "")
+                add_candidate(path, 2.0, f"grep:{pat}")
 
     # Add common config files if present
     top = _listdir(ledger_path=ledger_path, workspace=workspace, task_id=task_id, path=".")
