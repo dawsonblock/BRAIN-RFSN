@@ -1,52 +1,104 @@
-# BRAIN-RFSN (minimal kernel scaffold)
+# RFSN — Reinforced, Faithful, Safe, Narrow
 
-This repository contains a **deterministic safety kernel** with:
+A **deterministic safety kernel** for code repair agents.
 
-- `gate(state, proposal) -> decision` (allow/deny)
-- controller execution for approved actions
-- an append-only JSONL ledger with a hash chain
-- replay checks: ledger integrity + gate determinism
+```
+┌─────────────────────────────────────────────────┐
+│           UPSTREAM (Learning)                   │
+│  ThompsonBandit │ OutcomesDB │ PromptBank       │
+└──────────────────┬──────────────────────────────┘
+                   │ arm_id
+                   ▼
+┌─────────────────────────────────────────────────┐
+│           COMPANION (Proposer)                  │
+│  proposer.py → strategies.py (6 strategies)    │
+└──────────────────┬──────────────────────────────┘
+                   │ Proposal(actions)
+                   ▼
+┌─────────────────────────────────────────────────┐
+│           KERNEL (Hard Boundary)                │
+│  gate.py │ controller.py │ ledger.py           │
+│  patch_safety.py │ replay.py │ types.py        │
+└─────────────────────────────────────────────────┘
+```
 
-It also includes:
+## Quick Start
 
-- a deterministic proposer stub (always runs allowlisted tests)
-- a minimal "upstream learner" skeleton (Thompson bandit + SQLite outcome logging)
+```bash
+# Install
+pip install -e .[dev]
 
-This repo **does not** include:
+# Run tests
+pytest -q
 
-- LLM integrations
-- retrieval or memory systems
-- SWE-bench search / multi-attempt strategies
-- "digital organism" modules (panic/sleep/neurochemistry/etc.)
+# Run an episode (no LLM)
+python rfsn_run.py --workspace /path/to/repo --episodes 3 --verbose
+
+# Run LLM agent loop
+export LLM_API_KEY="..."
+python rfsn_swe_agent.py --workspace /path/to/repo --attempts 6 --verbose
+```
+
+## Project Structure
+
+```
+rfsn_kernel/           # Hard boundary (gate + controller + ledger)
+├── gate.py            # Deterministic allow/deny
+├── controller.py      # Execute approved actions
+├── ledger.py          # Hash-chained append-only log
+├── patch_safety.py    # Diff parsing + path confinement
+├── replay.py          # Integrity verification
+└── types.py           # Core dataclasses
+
+rfsn_companion/        # Proposer stubs (not a real planner yet)
+├── proposer.py        # Dispatch by arm_id
+└── strategies.py      # 6 deterministic strategies
+
+upstream_learner/      # Learning scaffolding
+├── bandit.py          # Thompson sampler + persistence
+├── outcomes_db.py     # SQLite outcomes + queries
+├── episode.py         # Single episode runner
+└── prompt_bank.py     # Arm definitions
+
+tests/                 # 41 tests
+
+rfsn_run.py           # Simple runner (bandit + strategies)
+rfsn_swe_agent.py     # LLM agent loop (proposer spine)
+rfsn_swe_llm.py       # Stdlib OpenAI client
+rfsn_cli.py           # CLI wrapper
+
+docs/                 # Additional documentation
+```
+
+## Security Model
+
+| Action | Constraint |
+|--------|------------|
+| `READ_FILE` | Realpath must be inside workspace |
+| `WRITE_FILE` | 512KB/file, 2MB/proposal, realpath confined |
+| `APPLY_PATCH` | All diff paths parsed + realpath confined |
+| `RUN_TESTS` | Only `pytest -q [safe-nodeids...]` |
+
+Key invariants:
+
+- **Realpath confinement** — Symlinks inside workspace pointing outside are rejected
+- **No flags after -q** — Prevents `--cov`, `-s`, etc.
+- **Hash-chained ledger** — Tamper-evident audit log
+- **Deterministic gate** — Same inputs → same decision (verified by replay)
+
+## Entrypoints
+
+| Script | Purpose |
+|--------|---------|
+| `rfsn_run.py` | Run episodes with bandit + strategies |
+| `rfsn_swe_agent.py` | LLM-driven iterative repair loop |
+| `rfsn_cli.py` | CLI wrapper |
 
 ## Requirements
 
-- Python **3.12+** (see `pyproject.toml`)
-- `git` (only needed if you use `APPLY_PATCH`)
+- Python **3.12+**
+- `git` (only for `APPLY_PATCH`)
 
-## Install
+## License
 
-```bash
-pip install -e .[dev]
-```
-
-## Run
-
-```bash
-python -m rfsn_cli run --workspace /path/to/your/repo --episodes 1
-```
-
-Artifacts:
-
-- `run_logs/ledger.jsonl`
-- `outcomes.sqlite`
-
-## Security boundary
-
-The gate only approves:
-
-- `READ_FILE` / `WRITE_FILE` within workspace
-- `APPLY_PATCH` only if diff paths are parseable + confined
-- `RUN_TESTS` only if argv starts with:
-  - `pytest -q`
-  - `python -m pytest -q`
+MIT
