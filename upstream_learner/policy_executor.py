@@ -155,6 +155,16 @@ class PolicyExecutor:
         self.selection_method = selection_method
         self._ensure_arms_registered()
 
+    @classmethod
+    def load(cls, bandit_path: str = "./run_logs/bandit.json") -> PolicyExecutor:
+        """Load bandit from disk (or create new) and return executor."""
+        bandit = ThompsonBandit.load_or_create(bandit_path)
+        return cls(bandit=bandit)
+
+    def save(self, path: str) -> None:
+        """Save bandit state to disk."""
+        self.bandit.save(path)
+
     def _ensure_arms_registered(self) -> None:
         """Ensure all default arms are registered in the bandit."""
         for arm in DEFAULT_ARMS:
@@ -180,6 +190,10 @@ class PolicyExecutor:
     def record_outcome(self, arm_id: str, reward: float) -> None:
         """Record outcome for learning."""
         self.bandit.update(arm_id, reward)
+
+    # Back-compat alias used by older codepaths
+    def update(self, arm_id: str, reward: float) -> None:
+        self.record_outcome(arm_id, reward=reward)
 
     def get_stats(self) -> List[Dict[str, Any]]:
         """Get arm statistics for monitoring."""

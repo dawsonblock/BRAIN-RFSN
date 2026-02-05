@@ -177,9 +177,12 @@ def _listdir(*, ledger_path: str, workspace: str, task_id: str, path: str) -> Li
     return []
 
 
-def _grep(*, ledger_path: str, workspace: str, task_id: str, pattern: str, path: str = ".") -> List[Dict[str, object]]:
+def _grep(*, ledger_path: str, workspace: str, task_id: str, pattern: str, path: str = ".", fixed_string: bool = True) -> List[Dict[str, object]]:
     st = StateSnapshot(workspace=workspace, notes={"task_id": task_id, "phase": "context_grep"})
-    prop = Proposal(actions=(Action("GREP", {"pattern": pattern, "path": path}),), meta={"pattern": pattern, "path": path})
+    prop = Proposal(
+        actions=(Action("GREP", {"pattern": pattern, "path": path, "fixed_string": fixed_string}),),
+        meta={"pattern": pattern, "path": path},
+    )
     d, res = _run_step(ledger_path=ledger_path, state=st, proposal=prop)
     if not d.allowed or not res:
         return []
@@ -281,8 +284,17 @@ def build_context_pack(
 
     # Use grep to expand candidates
     if include_grep_expansion:
+        # Default to fixed string unless deep_grep is explicitly enabled (which allows regex)
+        use_fixed = not deep_grep
         for pat in patterns:
-            hits = _grep(ledger_path=ledger_path, workspace=workspace, task_id=task_id, pattern=pat, path=".")
+            hits = _grep(
+                ledger_path=ledger_path,
+                workspace=workspace,
+                task_id=task_id,
+                pattern=pat,
+                path=".",
+                fixed_string=use_fixed,
+            )
             hits_sorted = sorted(
                 hits,
                 key=lambda h: (str(h.get("path") or ""), str(h.get("line") or "0"), str(h.get("text") or "")),

@@ -21,7 +21,7 @@ import os
 import re
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 _UNIFIED_DIFF_START_RE = re.compile(r"(?m)^(diff --git .+)$")
@@ -71,38 +71,35 @@ class LLMClient:
         self,
         *,
         prompt: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        model: str | None = None,
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 1400,
+        seed: Optional[int] = None,
     ) -> str:
         """
-        OpenAI-compatible chat.completions request.
-
-        Expected response shapes supported:
-        - {"choices":[{"message":{"content":"..."}}]}
-        - {"choices":[{"text":"..."}]}
+        OpenAI-compatible Chat Completions call.
+        Expects env:
+          LLM_BASE_URL, LLM_API_KEY, LLM_MODEL
         """
+        url = (self.base_url or "").rstrip("/")
+        if not url:
+            raise RuntimeError("LLM_BASE_URL missing")
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         payload: Dict[str, Any] = {
             "model": model or self.model,
-            "temperature": temperature if temperature is not None else 0.2,
-            "messages": [
-                {"role": "system", "content": "You are a code repair model. Output only unified diffs."},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": float(temperature),
+            "max_tokens": int(max_tokens),
         }
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        data = json.dumps(payload).encode("utf-8")
+        # Some providers accept seed; harmless to include if ignored.
+        if seed is not None:
+            payload["seed"] = int(seed)
 
-        req = urllib.request.Request(
-            self.base_url,
-            data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-            method="POST",
-        )
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
 
         with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
