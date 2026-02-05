@@ -2,20 +2,17 @@
 """FastAPI backend for RFSN Control Center."""
 from __future__ import annotations
 
-import asyncio
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse, PlainTextResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from datetime import datetime
-import json
 from dataclasses import dataclass, field
 
-from .security import is_path_confined, validate_run_id, safe_join, ConfinementError
+from .security import validate_run_id, safe_join, ConfinementError
 from .ledger_parse import (
     parse_ledger_file,
     build_timeline,

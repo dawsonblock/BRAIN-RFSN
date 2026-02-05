@@ -91,7 +91,7 @@ export function RunPage() {
         return <div className="p-8 text-gray-500">Run not found</div>;
     }
 
-    const isRunning = run.status === 'running';
+
     const canStart = run.status === 'created';
     const canStop = run.status === 'running';
 

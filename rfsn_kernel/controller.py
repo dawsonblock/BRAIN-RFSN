@@ -326,7 +326,7 @@ def _list_dir(workspace: str, path: str = ".") -> Dict[str, Any]:
                 entry["type"] = "dir"
             elif os.path.isfile(full):
                 entry["type"] = "file"
-                entry["size"] = os.path.getsize(full)
+                entry["size"] = int(os.path.getsize(full))
             else:
                 entry["type"] = "other"
         except OSError:
